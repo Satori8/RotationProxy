@@ -1,0 +1,24 @@
+{
+  "last_fallback_switch_time": 0.0,
+  "model_cooldowns": {},
+  "consecutive_model_failures": {},
+  "rotation_lists": {
+    "gemini-3.5-flash": [
+      "gemini-3.5-flash",
+      "deepseek/deepseek-r1:free",
+      "qwen/qwen-2.5-72b-instruct:free",
+      "meta-llama/llama-3.3-70b-instruct:free",
+      "deepseek/deepseek-chat:free"
+    ],
+    "gemini-flash-lite-latest": [
+      "gemini-flash-lite-latest",
+      "deepseek-v4-flash-free",
+      "mimo-v2.5-free",
+      "nemotron-3-super-free",
+      "google/gemini-2.5-flash:free",
+      "google/gemma-2-9b-it:free",
+      "meta-llama/llama-3.1-8b-instruct:free",
+      "qwen/qwen-2.5-coder-32b-instruct:free"
+    ]
+  }
+}
