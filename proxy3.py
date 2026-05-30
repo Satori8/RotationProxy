@@ -2,6 +2,19 @@ import os
 import sys
 import argparse
 
+# Force UTF-8 stream encoding on Windows to prevent charmap codec errors with emojis
+if sys.platform.startswith("win"):
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="ignore")
+        except Exception:
+            pass
+    if hasattr(sys.stderr, "reconfigure"):
+        try:
+            sys.stderr.reconfigure(encoding="utf-8", errors="ignore")
+        except Exception:
+            pass
+
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 

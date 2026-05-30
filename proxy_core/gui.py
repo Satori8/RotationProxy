@@ -38,6 +38,11 @@ def run_server_subprocess(host: str, port: int, reload: bool):
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
+    # Force python subprocesses to output UTF-8 text to prevent charmap codec errors
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+
     return subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -45,6 +50,7 @@ def run_server_subprocess(host: str, port: int, reload: bool):
         text=True,
         bufsize=1,
         startupinfo=startupinfo,
+        env=env,
     )
 
 
