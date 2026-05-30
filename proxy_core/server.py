@@ -670,7 +670,23 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
             current_config = load_rotation_config()
             current_force_model = current_config.get("force_model", {})
-            current_forced_model = current_force_model.get(requested_model, "auto")
+            if (
+                requested_model in THINKING_MODELS
+                or requested_model == "gemini-3.5-flash"
+            ):
+                current_forced_model = current_force_model.get(
+                    "gemini-3.5-flash", "auto"
+                )
+            elif (
+                requested_model in QUICK_MODELS
+                or requested_model == "gemini-flash-lite-latest"
+            ):
+                current_forced_model = current_force_model.get(
+                    "gemini-flash-lite-latest", "auto"
+                )
+            else:
+                current_forced_model = current_force_model.get(requested_model, "auto")
+
             if current_forced_model != forced_model:
                 logger.info(
                     f"[{provider_name}] Manual model switch detected during 429 retry sequence: '{forced_model}' -> '{current_forced_model}'. Restarting routing."
