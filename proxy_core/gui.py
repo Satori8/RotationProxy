@@ -240,11 +240,37 @@ class ProxyGUI(ctk.CTk):
         )
         self.clear_btn.grid(row=1, column=0, pady=10)
 
-        # Tab 2: Model Manager (Placeholder structure for next task)
+        # Tab 2: Model Manager
         self.tab_manager = self.tabview.tab("Model Manager")
         self.tab_manager.grid_columnconfigure(0, weight=1)
         self.tab_manager.grid_columnconfigure(1, weight=1)
         self.tab_manager.grid_rowconfigure(0, weight=1)
+
+        # Left Side of Manager: Live Diagnostics Monitor
+        self.left_manager_frame = ctk.CTkFrame(self.tab_manager, corner_radius=8)
+        self.left_manager_frame.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+        self.left_manager_frame.grid_columnconfigure(0, weight=1)
+        self.left_manager_frame.grid_rowconfigure(2, weight=1)
+
+        ctk.CTkLabel(
+            self.left_manager_frame,
+            text="OpenRouter Free Models",
+            font=ctk.CTkFont(size=14, weight="bold"),
+        ).grid(row=0, column=0, pady=(10, 5))
+
+        self.fetch_btn = ctk.CTkButton(
+            self.left_manager_frame,
+            text="Fetch Free Models",
+            command=self.on_fetch_free_models,
+        )
+        self.fetch_btn.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+
+        # Scrollable container for dynamic rows
+        self.models_scroll = ctk.CTkScrollableFrame(self.left_manager_frame)
+        self.models_scroll.grid(row=2, column=0, padx=10, pady=5, sticky="nsew")
+        self.models_scroll.grid_columnconfigure(0, weight=1)
+
+        self.loaded_models_data = []  # List to track rendered widgets
 
         self.start_server_subprocess()
         self.poll_queue()
@@ -426,3 +452,139 @@ class ProxyGUI(ctk.CTk):
     def on_close(self):
         self.stop_server_subprocess()
         self.destroy()
+
+    def on_fetch_free_models(self):
+        """Asynchronously fetch free models in a background thread."""
+        self.fetch_btn.configure(state="disabled", text="Fetching...")
+
+        def do_fetch():
+            import urllib.request
+
+            url = "https://openrouter.ai/api/v1/models"
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=8.0) as response:
+                    data = json.loads(response.read().decode("utf-8"))
+                    free_models = []
+                    for m in data.get("data", []):
+                        pricing = m.get("pricing", {})
+                        is_prompt_free = float(pricing.get("prompt", 0)) == 0.0
+                        is_completion_free = float(pricing.get("completion", 0)) == 0.0
+                        if is_prompt_free and is_completion_free:
+                            free_models.append(
+                                {
+                                    "id": m.get("id"),
+                                    "name": m.get("name"),
+                                    "context_length": m.get(
+                                        "context_length", "unknown"
+                                    ),
+                                }
+                            )
+                    # Sort by id
+                    free_models = sorted(free_models, key=lambda x: x["id"])
+                    self.after(0, lambda: self.render_free_models(free_models))
+            except Exception as e:
+                logger.error(f"[GUI] Failed to fetch free models: {e}")
+                self.after(
+                    0,
+                    lambda: self.fetch_btn.configure(
+                        state="normal", text="Fetch Free Models"
+                    ),
+                )
+
+        threading.Thread(target=do_fetch, daemon=True).start()
+
+    def render_free_models(self, models):
+        """Render list of models in the scrollable frame."""
+        # Clear previous widgets
+        for widget in self.models_scroll.winfo_children():
+            widget.destroy()
+        self.loaded_models_data.clear()
+
+        for idx, m in enumerate(models):
+            row_frame = ctk.CTkFrame(self.models_scroll, fg_color="transparent")
+            row_frame.grid(row=idx, column=0, padx=2, pady=4, sticky="ew")
+            row_frame.grid_columnconfigure(0, weight=1)
+
+            # Info text (ID and context)
+            info_text = f"{m['name']}\n({m['id']})\nCtx: {m['context_length']}"
+            lbl = ctk.CTkLabel(
+                row_frame, text=info_text, font=ctk.CTkFont(size=10), justify="left"
+            )
+            lbl.grid(row=0, column=0, padx=5, pady=2, sticky="w")
+
+            # Status Badge (circle indicator)
+            badge = ctk.CTkLabel(
+                row_frame, text="●", text_color="#7F8C8D", font=ctk.CTkFont(size=16)
+            )
+            badge.grid(row=0, column=1, padx=5)
+
+            # Test Button
+            test_cb = lambda model_id=m["id"], b=badge: self.on_test_individual_model(
+                model_id, b
+            )
+            btn_test = ctk.CTkButton(
+                row_frame,
+                text="Test",
+                width=45,
+                height=20,
+                font=ctk.CTkFont(size=9),
+                command=test_cb,
+            )
+            btn_test.grid(row=0, column=2, padx=2)
+
+            # Add to Rotation Button
+            add_cb = lambda model_id=m["id"]: self.on_add_model_to_rotation(model_id)
+            btn_add = ctk.CTkButton(
+                row_frame,
+                text="+ Add",
+                width=45,
+                height=20,
+                font=ctk.CTkFont(size=9),
+                fg_color="#27AE60",
+                hover_color="#2ECC71",
+                command=add_cb,
+            )
+            btn_add.grid(row=0, column=3, padx=2)
+
+        self.fetch_btn.configure(state="normal", text="Fetch Free Models")
+
+    def on_test_individual_model(self, model_id, badge_widget):
+        """Test a model via background thread and update its status indicator badge."""
+        badge_widget.configure(text_color="#F1C40F")  # Yellow for testing...
+
+        def do_test():
+            import httpx
+
+            url = f"http://{self.host}:{self.port}/control/test_model"
+            try:
+                r = httpx.post(
+                    url,
+                    json={"model": model_id, "provider": "openrouter"},
+                    timeout=12.0,
+                )
+                if r.status_code == 200:
+                    res = r.json()
+                    status = res.get("status")
+                    if status == "ok":
+                        self.after(
+                            0, lambda: badge_widget.configure(text_color="#2ECC71")
+                        )  # Green
+                    elif status == "rate_limited":
+                        self.after(
+                            0, lambda: badge_widget.configure(text_color="#E67E22")
+                        )  # Orange (429)
+                    else:
+                        self.after(
+                            0, lambda: badge_widget.configure(text_color="#E74C3C")
+                        )  # Red (404/Error)
+                else:
+                    self.after(0, lambda: badge_widget.configure(text_color="#E74C3C"))
+            except Exception:
+                self.after(0, lambda: badge_widget.configure(text_color="#E74C3C"))
+
+        threading.Thread(target=do_test, daemon=True).start()
+
+    def on_add_model_to_rotation(self, model_id):
+        # Stub for the next task
+        pass
