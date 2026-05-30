@@ -591,8 +591,10 @@ class ProxyGUI(ctk.CTk):
         self.fetch_btn.configure(state="normal", text="Fetch Free Models")
 
     def on_test_individual_model(self, model_id, badge_widget):
-        """Test a model via background thread and update its status indicator badge."""
-        badge_widget.configure(text_color="#F1C40F")  # Yellow for testing...
+        """Test a model via background thread and update its status indicator badge and response latency."""
+        badge_widget.configure(
+            text_color="#F1C40F", text="● ..."
+        )  # Yellow for testing...
 
         def do_test():
             import httpx
@@ -607,35 +609,60 @@ class ProxyGUI(ctk.CTk):
                 if r.status_code == 200:
                     res = r.json()
                     status = res.get("status")
+                    latency = res.get("latency_ms", 0)
                     if status == "ok":
                         self.after(
-                            0, lambda: badge_widget.configure(text_color="#2ECC71")
+                            0,
+                            lambda: badge_widget.configure(
+                                text_color="#2ECC71", text=f"● {latency}ms"
+                            ),
                         )  # Green
                     elif status == "rate_limited":
                         self.after(
-                            0, lambda: badge_widget.configure(text_color="#E67E22")
+                            0,
+                            lambda: badge_widget.configure(
+                                text_color="#E67E22", text=f"● 429 ({latency}ms)"
+                            ),
                         )  # Orange (429)
+                    elif status == "not_found":
+                        self.after(
+                            0,
+                            lambda: badge_widget.configure(
+                                text_color="#E74C3C", text="● 404"
+                            ),
+                        )  # Red (404)
                     else:
                         logger.error(f"[GUI] Model test returned status: {status}")
                         log_queue.put(
                             f"[GUI] [WARNING] Model {model_id} test status: {status}"
                         )
                         self.after(
-                            0, lambda: badge_widget.configure(text_color="#E74C3C")
-                        )  # Red (404/Error)
+                            0,
+                            lambda: badge_widget.configure(
+                                text_color="#E74C3C", text="● ERR"
+                            ),
+                        )  # Red (Error)
                 else:
                     logger.error(f"[GUI] Model test HTTP error: {r.status_code}")
                     log_queue.put(
                         f"[GUI] [WARNING] Model {model_id} HTTP error: {r.status_code}"
                     )
-                    self.after(0, lambda: badge_widget.configure(text_color="#E74C3C"))
+                    self.after(
+                        0,
+                        lambda: badge_widget.configure(
+                            text_color="#E74C3C", text=f"● HTTP {r.status_code}"
+                        ),
+                    )
             except Exception as e:
                 import traceback
 
                 tb = traceback.format_exc()
                 logger.error(f"[GUI] Model test exception: {e}\n{tb}")
                 log_queue.put(f"[GUI] [ERROR] Model test exception for {model_id}: {e}")
-                self.after(0, lambda: badge_widget.configure(text_color="#E74C3C"))
+                self.after(
+                    0,
+                    lambda: badge_widget.configure(text_color="#E74C3C", text="● ERR"),
+                )
 
         threading.Thread(target=do_test, daemon=True).start()
 

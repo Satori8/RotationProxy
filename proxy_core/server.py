@@ -437,6 +437,7 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
     url = f"{base_url}/chat/completions"
     client = request.app.state.client
 
+    start_time = time.perf_counter()
     try:
         req_out = client.build_request(
             method="POST",
@@ -453,27 +454,42 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
             resp_text = "(failed to read response text)"
         await resp.aclose()
 
-        logger.info(f"[Test Model] Upstream status: {status_code}, body: {resp_text}")
+        latency_ms = int((time.perf_counter() - start_time) * 1000)
+        logger.info(
+            f"[Test Model] Upstream status: {status_code}, latency: {latency_ms}ms, body: {resp_text}"
+        )
 
         if status_code == 200:
-            return {"status": "ok", "message": "Model responded successfully!"}
+            return {
+                "status": "ok",
+                "message": "Model responded successfully!",
+                "latency_ms": latency_ms,
+            }
         elif status_code == 429:
             return {
                 "status": "rate_limited",
                 "message": f"Rate limit exceeded (429): {resp_text}",
+                "latency_ms": latency_ms,
             }
         elif status_code == 404:
             return {
                 "status": "not_found",
                 "message": f"Model not found (404): {resp_text}",
+                "latency_ms": latency_ms,
             }
         else:
             return {
                 "status": "error",
                 "message": f"Server returned status {status_code}: {resp_text}",
+                "latency_ms": latency_ms,
             }
     except Exception as e:
-        return {"status": "error", "message": f"Network/Connection error: {e}"}
+        latency_ms = int((time.perf_counter() - start_time) * 1000)
+        return {
+            "status": "error",
+            "message": f"Network/Connection error: {e}",
+            "latency_ms": latency_ms,
+        }
 
 
 @app.post("/control/reset_cooldowns")
