@@ -10,7 +10,7 @@ import datetime
 import customtkinter as ctk
 
 
-ANSI_ESCAPE = re.compile(r"\x1b(?:[@-Z\\-_]|\\[[0-9?]*[ -/]*[@-~])")
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 
 from proxy_core.config import (
     load_rotation_config,
@@ -103,6 +103,7 @@ class ProxyGUI(ctk.CTk):
         thinking_models = [
             "Auto (Rotation)",
             "gemini-3.5-flash",
+            "gemini-3-flash",
             "deepseek/deepseek-r1:free",
             "qwen/qwen-2.5-72b-instruct:free",
             "meta-llama/llama-3.3-70b-instruct:free",
@@ -214,6 +215,12 @@ class ProxyGUI(ctk.CTk):
         )
         self.log_textbox.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="nsew")
 
+        self.log_textbox.tag_config("info", foreground="#2ECC71")  # Emerald green
+        self.log_textbox.tag_config("warning", foreground="#F1C40F")  # Sun yellow
+        self.log_textbox.tag_config("error", foreground="#E74C3C")  # Alizarin red
+        self.log_textbox.tag_config("critical", foreground="#C0392B")  # Dark red
+        self.log_textbox.tag_config("debug", foreground="#7F8C8D")  # Asbestos grey
+
         self.clear_btn = ctk.CTkButton(
             self.right_panel, text="Clear Logs", command=self.on_clear_logs, width=120
         )
@@ -311,7 +318,20 @@ class ProxyGUI(ctk.CTk):
             try:
                 msg = log_queue.get_nowait()
                 msg = ANSI_ESCAPE.sub("", msg)
-                self.log_textbox.insert("end", msg + "\n")
+
+                tag = None
+                if "[INFO]" in msg:
+                    tag = "info"
+                elif "[WARNING]" in msg:
+                    tag = "warning"
+                elif "[ERROR]" in msg:
+                    tag = "error"
+                elif "[CRITICAL]" in msg:
+                    tag = "critical"
+                elif "[DEBUG]" in msg:
+                    tag = "debug"
+
+                self.log_textbox.insert("end", msg + "\n", tag)
                 self.log_textbox.see("end")
             except Exception:
                 break

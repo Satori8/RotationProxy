@@ -53,6 +53,8 @@ def save_kaggle_url(new_url: str) -> bool:
 def load_rotation_config() -> dict:
     target_gemini_35_list = [
         "gemini-3.5-flash",
+        "gemini-3-flash",
+        "deepseek/deepseek-v4-flash:free",
         "deepseek/deepseek-r1:free",
         "qwen/qwen-2.5-72b-instruct:free",
         "meta-llama/llama-3.3-70b-instruct:free",

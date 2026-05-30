@@ -67,6 +67,12 @@ MODEL_SETTINGS = {
         "keys_pool": API_KEYS,
         "target_model": "gemini-3.5-flash",
     },
+    "gemini-3-flash": {
+        "provider": "gemini",
+        "base_url": "https://generativelanguage.googleapis.com",
+        "keys_pool": API_KEYS,
+        "target_model": "gemini-3-flash",
+    },
     "gemini-3-flash-preview": {
         "provider": "gemini",
         "base_url": "https://generativelanguage.googleapis.com",
@@ -90,6 +96,12 @@ MODEL_SETTINGS = {
         "base_url": "https://openrouter.ai/api/v1",
         "keys_pool": OPENROUTER_KEYS,
         "target_model": "deepseek-v4-flash-free",
+    },
+    "deepseek/deepseek-v4-flash:free": {
+        "provider": "openrouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "keys_pool": OPENROUTER_KEYS,
+        "target_model": "deepseek/deepseek-v4-flash:free",
     },
     "mimo-v2.5-free": {
         "provider": "openrouter",
@@ -396,15 +408,15 @@ async def _transparent_proxy_attempt(request: Request, path: str):
         candidates = list(candidates) + ["qwen3.6"]
 
     forced_model = FORCE_MODEL.get(requested_model, "auto")
-    if forced_model != "auto" and forced_model in candidates:
-        candidates = [forced_model] + [c for c in candidates if c != forced_model]
-
     now = time.time()
-    available_candidates = [
-        candidate
-        for candidate in candidates
-        if rotation_config["model_cooldowns"].get(candidate, 0.0) <= now
-    ]
+    if forced_model != "auto":
+        available_candidates = [forced_model]
+    else:
+        available_candidates = [
+            candidate
+            for candidate in candidates
+            if rotation_config["model_cooldowns"].get(candidate, 0.0) <= now
+        ]
 
     if not available_candidates:
         logger.warning(f"[{requested_model}] [cooldown] [503]")
@@ -544,6 +556,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
         max_attempts = len(available_keys)
         model_success = False
+        consecutive_503s = 0
 
         for attempt, api_key in enumerate(available_keys, start=1):
             if attempt > 1 and await request.is_disconnected():
@@ -731,7 +744,20 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         f"[{provider_name}] Key #{key_index} 429 ({candidate_model}). Cooldown {cooldown_duration:.1f}s. Attempt {attempt}/{max_attempts}"
                     )
 
-                    retry_sleep = min(1.5 * consecutive_429, 15.0)
+                    # Exponential retry sleep: 1, 2, 4, 8, 16, then 65s
+                    if consecutive_429 == 1:
+                        retry_sleep = 1.0
+                    elif consecutive_429 == 2:
+                        retry_sleep = 2.0
+                    elif consecutive_429 == 3:
+                        retry_sleep = 4.0
+                    elif consecutive_429 == 4:
+                        retry_sleep = 8.0
+                    elif consecutive_429 == 5:
+                        retry_sleep = 16.0
+                    else:
+                        retry_sleep = 65.0
+
                     logger.info(f"[{provider_name}] Sleeping {retry_sleep:.2f}s...")
                     await asyncio.sleep(retry_sleep)
                     continue
@@ -744,7 +770,30 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         f"[{provider_name}] Key #{key_index} 403 ({candidate_model}). Cooldown 24h"
                     )
                     continue
-                elif response.status_code in (500, 502, 503):
+                elif response.status_code == 503:
+                    await response.aclose()
+                    mark_cooldown(api_key, duration=10.0)
+                    error_msg = "HTTP 503: Service Unavailable"
+                    log_non_429_error(candidate_model, api_key, error_msg)
+
+                    consecutive_503s += 1
+                    logger.error(
+                        f"[{provider_name}] Key #{key_index} HTTP 503 ({candidate_model}). Consecutive 503s: {consecutive_503s}/10"
+                    )
+
+                    if consecutive_503s >= 10:
+                        logger.error(
+                            f"[{provider_name}] Hit 10 consecutive 503s for model '{candidate_model}'. Forcing provider switch!"
+                        )
+                        break  # Break out of the key loop to switch candidate model (change provider)
+
+                    if consecutive_503s >= 3:
+                        logger.info(
+                            f"[{provider_name}] 3+ consecutive 503s. Sleeping 60s before trying next key..."
+                        )
+                        await asyncio.sleep(60.0)
+                    continue
+                elif response.status_code in (500, 502):
                     await response.aclose()
                     mark_cooldown(api_key, duration=10.0)
                     error_msg = f"HTTP {response.status_code}: Server Error"
