@@ -58,6 +58,20 @@ class ProxyGUI(ctk.CTk):
         self.stdout_thread = None
         self.stderr_thread = None
 
+        import sys
+
+        vpn_dir = r"D:\Work\Active\server-services\vpn_switcher\configs"
+        if vpn_dir not in sys.path:
+            sys.path.insert(0, vpn_dir)
+        try:
+            from vpn_manager import WindowsWireGuardManager
+
+            self.vpn_manager = WindowsWireGuardManager()
+            logger.info("Successfully loaded WindowsWireGuardManager in GUI.")
+        except Exception as ve:
+            self.vpn_manager = None
+            logger.error(f"Failed to load WindowsWireGuardManager in GUI: {ve}")
+
         config = load_rotation_config()
         config_force_model = config.get("force_model", {})
         for k, v in config_force_model.items():
@@ -215,6 +229,7 @@ class ProxyGUI(ctk.CTk):
 
         self.tabview.add("Console Logs")
         self.tabview.add("Model Manager")
+        self.tabview.add("VPN Manager")
 
         # Tab 1: Console Logs
         self.tab_logs = self.tabview.tab("Console Logs")
@@ -312,6 +327,88 @@ class ProxyGUI(ctk.CTk):
         self.active_domain_key = "gemini-3.5-flash"
         self.active_rotation_list = []
         self.load_active_rotation_from_disk()
+
+        # Tab 3: VPN Manager
+        self.tab_vpn = self.tabview.tab("VPN Manager")
+        self.tab_vpn.grid_columnconfigure(0, weight=1)
+        self.tab_vpn.grid_columnconfigure(1, weight=1)
+        self.tab_vpn.grid_rowconfigure(0, weight=1)
+
+        # Left subframe: VPN Tunnel Controller
+        self.vpn_control_frame = ctk.CTkFrame(self.tab_vpn, corner_radius=8)
+        self.vpn_control_frame.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+        self.vpn_control_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            self.vpn_control_frame,
+            text="VPN Tunnel Status",
+            font=ctk.CTkFont(size=14, weight="bold"),
+        ).grid(row=0, column=0, pady=(10, 10))
+
+        self.vpn_status_indicator = ctk.CTkLabel(
+            self.vpn_control_frame,
+            text="🔴 VPN Inactive",
+            text_color="#E74C3C",
+            font=ctk.CTkFont(size=16, weight="bold"),
+        )
+        self.vpn_status_indicator.grid(row=1, column=0, pady=(0, 20))
+
+        self.vpn_start_btn = ctk.CTkButton(
+            self.vpn_control_frame,
+            text="Start Tunnels",
+            fg_color="#27AE60",
+            hover_color="#2ECC71",
+            command=self.on_vpn_start_tunnels,
+        )
+        self.vpn_start_btn.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
+
+        self.vpn_stop_btn = ctk.CTkButton(
+            self.vpn_control_frame,
+            text="Stop Tunnels",
+            fg_color="#C0392B",
+            hover_color="#E74C3C",
+            command=self.on_vpn_stop_tunnels,
+        )
+        self.vpn_stop_btn.grid(row=3, column=0, padx=20, pady=10, sticky="ew")
+
+        # Right subframe: VPN Rotation Settings
+        self.vpn_config_frame = ctk.CTkFrame(self.tab_vpn, corner_radius=8)
+        self.vpn_config_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
+        self.vpn_config_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            self.vpn_config_frame,
+            text="VPN Rotation Settings",
+            font=ctk.CTkFont(size=14, weight="bold"),
+        ).grid(row=0, column=0, pady=(10, 10))
+
+        ctk.CTkLabel(
+            self.vpn_config_frame, text="VPN Switching Mode:", font=ctk.CTkFont(size=11)
+        ).grid(row=1, column=0, padx=10, sticky="w")
+
+        self.vpn_mode_dropdown = ctk.CTkOptionMenu(
+            self.vpn_config_frame,
+            values=[
+                "Disabled (Выкл)",
+                "Every Request (Каждый запрос)",
+                "After N Errors (Смена после N ошибок)",
+            ],
+            command=self.on_vpn_mode_dropdown_change,
+        )
+        self.vpn_mode_dropdown.grid(row=2, column=0, padx=10, pady=(2, 15), sticky="ew")
+
+        # Container for dynamic mode-specific widgets
+        self.vpn_dynamic_container = ctk.CTkFrame(
+            self.vpn_config_frame, fg_color="transparent"
+        )
+        self.vpn_dynamic_container.grid(row=3, column=0, padx=10, pady=5, sticky="nsew")
+        self.vpn_dynamic_container.grid_columnconfigure(0, weight=1)
+
+        # Initialize and render dynamic settings
+        self.load_vpn_ui_settings()
+
+        # Start periodic 5s status check loop
+        self.poll_vpn_status_loop()
 
         self.start_server_subprocess()
         self.poll_queue()
@@ -492,6 +589,13 @@ class ProxyGUI(ctk.CTk):
 
     def on_close(self):
         self.stop_server_subprocess()
+        if hasattr(self, "vpn_manager") and self.vpn_manager is not None:
+            try:
+                logger.info("[GUI] Cleaning up VPN tunnels and routing on close...")
+                self.vpn_manager.disable_system_routing()
+                self.vpn_manager.uninstall_all_services()
+            except Exception as e:
+                logger.error(f"[GUI] Error during VPN cleanup on close: {e}")
         self.destroy()
 
     def on_fetch_free_models(self):
@@ -801,3 +905,270 @@ class ProxyGUI(ctk.CTk):
         except Exception as e:
             logger.error(f"[GUI] Failed to save rotation config: {e}")
             log_queue.put(f"[GUI] [ERROR] Failed to save rotation config: {e}")
+
+    def on_vpn_start_tunnels(self):
+        """Install and start all 6 WireGuard tunnels in a background thread."""
+        if not hasattr(self, "vpn_manager") or self.vpn_manager is None:
+            log_queue.put("[GUI] [ERROR] VPN Manager library is not loaded.")
+            return
+
+        if not self.vpn_manager.is_admin():
+            logger.info(
+                "[GUI] Requesting Windows Administrator privileges to install tunnels..."
+            )
+            log_queue.put(
+                "[GUI] [SYSTEM] WireGuard requires Administrator privileges. Requesting UAC elevation..."
+            )
+            self.vpn_manager.elevate()
+            return
+
+        self.vpn_start_btn.configure(state="disabled", text="Starting...")
+        log_queue.put(
+            "[GUI] [SYSTEM] Installing and starting all 6 VPN tunnels in the background..."
+        )
+
+        def run_start():
+            try:
+                self.vpn_manager.install_and_start_all_services()
+                log_queue.put(
+                    "[GUI] [SUCCESS] All 6 WireGuard tunnels started and gateway routes configured!"
+                )
+            except Exception as e:
+                logger.error(f"[GUI] Error starting tunnels: {e}")
+                log_queue.put(f"[GUI] [ERROR] Error starting tunnels: {e}")
+            finally:
+                self.after(
+                    0,
+                    lambda: self.vpn_start_btn.configure(
+                        state="normal", text="Start Tunnels"
+                    ),
+                )
+                self.after(0, self.do_poll_vpn_status)
+
+        threading.Thread(target=run_start, daemon=True).start()
+
+    def on_vpn_stop_tunnels(self):
+        """Stop and cleanly uninstall all 6 WireGuard tunnels in a background thread."""
+        if not hasattr(self, "vpn_manager") or self.vpn_manager is None:
+            log_queue.put("[GUI] [ERROR] VPN Manager library is not loaded.")
+            return
+
+        if not self.vpn_manager.is_admin():
+            logger.info(
+                "[GUI] Requesting Windows Administrator privileges to stop tunnels..."
+            )
+            log_queue.put(
+                "[GUI] [SYSTEM] WireGuard requires Administrator privileges. Requesting UAC elevation..."
+            )
+            self.vpn_manager.elevate()
+            return
+
+        self.vpn_stop_btn.configure(state="disabled", text="Stopping...")
+        log_queue.put("[GUI] [SYSTEM] Stopping and cleanly removing all VPN tunnels...")
+
+        def run_stop():
+            try:
+                self.vpn_manager.uninstall_all_services()
+                self.vpn_manager.disable_system_routing()
+                log_queue.put(
+                    "[GUI] [SUCCESS] All WireGuard tunnels removed. System routing restored to default."
+                )
+            except Exception as e:
+                logger.error(f"[GUI] Error stopping tunnels: {e}")
+                log_queue.put(f"[GUI] [ERROR] Error stopping tunnels: {e}")
+            finally:
+                self.after(
+                    0,
+                    lambda: self.vpn_stop_btn.configure(
+                        state="normal", text="Stop Tunnels"
+                    ),
+                )
+                self.after(0, self.do_poll_vpn_status)
+
+        threading.Thread(target=run_stop, daemon=True).start()
+
+    def poll_vpn_status_loop(self):
+        """Periodic loop to poll the status of VPN tunnels every 5 seconds."""
+        self.do_poll_vpn_status()
+        self.after(5000, self.poll_vpn_status_loop)
+
+    def do_poll_vpn_status(self):
+        """Run is_any_tunnel_active on a background thread to prevent UI lag."""
+        if not hasattr(self, "vpn_manager") or self.vpn_manager is None:
+            return
+
+        def run_check():
+            try:
+                active = self.vpn_manager.is_any_tunnel_active()
+                if active:
+                    self.after(
+                        0,
+                        lambda: self.vpn_status_indicator.configure(
+                            text="🟢 VPN Active", text_color="#2ECC71"
+                        ),
+                    )
+                else:
+                    self.after(
+                        0,
+                        lambda: self.vpn_status_indicator.configure(
+                            text="🔴 VPN Inactive", text_color="#E74C3C"
+                        ),
+                    )
+            except Exception as e:
+                logger.debug(f"[VPN Status Check Error] {e}")
+
+        threading.Thread(target=run_check, daemon=True).start()
+
+    def load_vpn_ui_settings(self):
+        """Load VPN mode and settings from disk configuration."""
+        config = load_rotation_config()
+        mode = config.get("vpn_switching_mode", "disabled")
+
+        if mode == "every_request":
+            self.vpn_mode_dropdown.set("Every Request (Каждый запрос)")
+        elif mode == "error_threshold":
+            self.vpn_mode_dropdown.set("After N Errors (Смена после N ошибок)")
+        else:
+            self.vpn_mode_dropdown.set("Disabled (Выкл)")
+
+        self.render_vpn_dynamic_options(mode, config)
+
+    def render_vpn_dynamic_options(self, mode, config):
+        """Dynamically render the appropriate fields based on VPN Switching Mode."""
+        for widget in self.vpn_dynamic_container.winfo_children():
+            widget.destroy()
+
+        if mode == "disabled":
+            lbl = ctk.CTkLabel(
+                self.vpn_dynamic_container,
+                text="Static VPN Channel:",
+                font=ctk.CTkFont(size=11, weight="bold"),
+            )
+            lbl.grid(row=0, column=0, padx=10, sticky="w", pady=(5, 2))
+
+            static_channels = [
+                "No VPN",
+                "VPN 1",
+                "VPN 2",
+                "VPN 3",
+                "VPN 4",
+                "VPN 5",
+                "VPN 6",
+            ]
+            self.static_dropdown = ctk.CTkOptionMenu(
+                self.vpn_dynamic_container,
+                values=static_channels,
+                command=self.on_vpn_static_change,
+            )
+            self.static_dropdown.grid(
+                row=1, column=0, padx=10, pady=(0, 10), sticky="ew"
+            )
+
+            current_static = config.get("vpn_static_channel", 0)
+            if 0 < current_static <= 6:
+                self.static_dropdown.set(f"VPN {current_static}")
+            else:
+                self.static_dropdown.set("No VPN")
+
+        elif mode == "error_threshold":
+            lbl = ctk.CTkLabel(
+                self.vpn_dynamic_container,
+                text="Errors Threshold (N):",
+                font=ctk.CTkFont(size=11, weight="bold"),
+            )
+            lbl.grid(row=0, column=0, padx=10, sticky="w", pady=(5, 2))
+
+            self.threshold_entry = ctk.CTkEntry(self.vpn_dynamic_container, width=100)
+            self.threshold_entry.grid(
+                row=1, column=0, padx=10, pady=(0, 10), sticky="w"
+            )
+            self.threshold_entry.insert(0, str(config.get("vpn_errors_threshold", 5)))
+
+            btn_save = ctk.CTkButton(
+                self.vpn_dynamic_container,
+                text="Save Threshold",
+                width=110,
+                fg_color="#27AE60",
+                hover_color="#2ECC71",
+                command=self.on_vpn_threshold_save,
+            )
+            btn_save.grid(row=1, column=1, padx=10, pady=(0, 10), sticky="w")
+
+    def on_vpn_mode_dropdown_change(self, val):
+        """Update and save switching mode from dropdown selection."""
+        config = load_rotation_config()
+        if "Every Request" in val:
+            mode = "every_request"
+        elif "After N Errors" in val:
+            mode = "error_threshold"
+        else:
+            mode = "disabled"
+
+        config["vpn_switching_mode"] = mode
+        save_rotation_config(config)
+
+        self.render_vpn_dynamic_options(mode, config)
+        logger.info(f"[GUI] Saved VPN switching mode to: {mode}")
+        log_queue.put(f"[GUI] Saved VPN switching mode to: {mode}")
+
+    def on_vpn_static_change(self, val):
+        """Handle manual static VPN routing change on a background thread."""
+        config = load_rotation_config()
+        if "VPN " in val:
+            try:
+                channel = int(val.replace("VPN ", ""))
+            except ValueError:
+                channel = 0
+        else:
+            channel = 0
+
+        config["vpn_static_channel"] = channel
+        save_rotation_config(config)
+
+        if not hasattr(self, "vpn_manager") or self.vpn_manager is None:
+            log_queue.put("[GUI] [ERROR] VPN Manager not loaded.")
+            return
+
+        if not self.vpn_manager.is_admin():
+            log_queue.put(
+                "[GUI] [SYSTEM] WireGuard requires Administrator privileges to change routes."
+            )
+            self.vpn_manager.elevate()
+            return
+
+        log_queue.put(
+            f"[GUI] [SYSTEM] Changing system routing default gateway to {val}..."
+        )
+
+        def run_static_switch():
+            try:
+                if channel == 0:
+                    self.vpn_manager.disable_system_routing()
+                    log_queue.put(
+                        "[GUI] [SUCCESS] Default routing restored to home gateway."
+                    )
+                else:
+                    self.vpn_manager.enable_system_routing_via(channel)
+                    log_queue.put(
+                        f"[GUI] [SUCCESS] System routing successfully directed through VPN {channel}!"
+                    )
+            except Exception as e:
+                logger.error(f"[GUI] Static switch error: {e}")
+                log_queue.put(f"[GUI] [ERROR] Static switch error: {e}")
+
+        threading.Thread(target=run_static_switch, daemon=True).start()
+
+    def on_vpn_threshold_save(self):
+        """Save errors threshold when clicked."""
+        config = load_rotation_config()
+        try:
+            val = int(self.threshold_entry.get().strip())
+            if val < 1:
+                val = 1
+        except ValueError:
+            val = 5
+
+        config["vpn_errors_threshold"] = val
+        save_rotation_config(config)
+        logger.info(f"[GUI] Saved VPN errors threshold: {val}")
+        log_queue.put(f"[GUI] Saved VPN errors threshold: {val}")

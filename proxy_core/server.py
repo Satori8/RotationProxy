@@ -40,7 +40,50 @@ from proxy_core.rotation import (
 )
 from proxy_core.state import log_queue as global_log_queue
 
+import sys
+import os
+
 logger = logging.getLogger("proxy")
+
+# Dynamically add vpn_manager directory to path
+vpn_dir = r"D:\Work\Active\server-services\vpn_switcher\configs"
+if vpn_dir not in sys.path:
+    sys.path.insert(0, vpn_dir)
+
+try:
+    from vpn_manager import WindowsWireGuardManager
+
+    vpn_manager = WindowsWireGuardManager()
+    logger.info("Successfully imported WindowsWireGuardManager in Server.")
+except Exception as ve:
+    vpn_manager = None
+    logger.error(f"Failed to import WindowsWireGuardManager in Server: {ve}")
+
+# VPN Global State for Rotation
+VPN_CONSECUTIVE_ERRORS = 0
+VPN_CURRENT_INDEX = 1
+VPN_ROTATION_LOCK = asyncio.Lock()
+
+
+async def rotate_vpn_on_the_fly(reason: str):
+    global VPN_CURRENT_INDEX
+    async with VPN_ROTATION_LOCK:
+        next_index = (VPN_CURRENT_INDEX % 6) + 1
+        VPN_CURRENT_INDEX = next_index
+        logger.info(f"[VPN] Rotating to VPN {next_index} due to {reason}...")
+        global_log_queue.put(f"[VPN] Rotating to VPN {next_index} due to {reason}...")
+        if vpn_manager:
+            try:
+                await asyncio.to_thread(
+                    vpn_manager.enable_system_routing_via, next_index
+                )
+            except Exception as re:
+                logger.error(f"[VPN] Route enable error: {re}")
+                global_log_queue.put(f"[VPN] [ERROR] Route enable error: {re}")
+        else:
+            logger.warning(
+                "[VPN] vpn_manager not available, skipping actual route change."
+            )
 
 
 class QueueLogHandler(logging.Handler):
@@ -526,6 +569,7 @@ async def transparent_proxy(request: Request, path: str):
 
 
 async def _transparent_proxy_attempt(request: Request, path: str):
+    global VPN_CONSECUTIVE_ERRORS, VPN_CURRENT_INDEX
     client = request.app.state.client
     body = await request.body()
     query_params = dict(request.query_params)
@@ -843,10 +887,24 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     if request.method in ("POST", "PUT", "PATCH")
                     else None,
                 )
+
+                # VPN rotation on "every_request" mode right before dispatching
+                try:
+                    rotation_config = load_rotation_config()
+                    vpn_mode = rotation_config.get("vpn_switching_mode", "disabled")
+                    if vpn_mode == "every_request":
+                        await rotate_vpn_on_the_fly("every_request mode trigger")
+                except Exception as ve:
+                    logger.error(f"[VPN] Error in pre-request VPN rotation: {ve}")
+
                 LAST_USED[api_key] = time.time()
                 response = await client.send(req, stream=True)
 
                 if response.status_code == 200:
+                    VPN_CONSECUTIVE_ERRORS = (
+                        0  # Reset consecutive error counter on success!
+                    )
+
                     rotation_config["consecutive_model_failures"][candidate_model] = 0
                     CONSECUTIVE_429S[provider_name] = 0
                     CONSECUTIVE_RPD_429S[api_key] = 0  # Reset on success!
@@ -979,6 +1037,33 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     consecutive_429 = CONSECUTIVE_429S.get(provider_name, 0) + 1
                     CONSECUTIVE_429S[provider_name] = consecutive_429
 
+                    # VPN Integration: Track consecutive 429 errors
+                    VPN_CONSECUTIVE_ERRORS += 1
+
+                    rotation_config = load_rotation_config()
+                    vpn_mode = rotation_config.get("vpn_switching_mode", "disabled")
+                    vpn_threshold = int(rotation_config.get("vpn_errors_threshold", 5))
+
+                    if (
+                        vpn_mode == "error_threshold"
+                        and VPN_CONSECUTIVE_ERRORS >= vpn_threshold
+                    ):
+                        logger.warning(
+                            f"[VPN] Error threshold reached ({VPN_CONSECUTIVE_ERRORS}/{vpn_threshold}). Rotating VPN immediately..."
+                        )
+                        await rotate_vpn_on_the_fly("429 error threshold")
+                        VPN_CONSECUTIVE_ERRORS = 0
+                        # Immediately retry without sleeping
+                        continue
+
+                    if vpn_mode == "disabled" and VPN_CONSECUTIVE_ERRORS >= 5:
+                        logger.warning(
+                            f"[VPN] Consecutive 429 errors reached 5 in Disabled mode. Sleep 65s pause..."
+                        )
+                        await asyncio.sleep(65.0)
+                        VPN_CONSECUTIVE_ERRORS = 0
+                        continue
+
                     now_ts = time.time()
                     prev_429_ts = LAST_429_TIME.get(api_key, 0.0)
                     LAST_429_TIME[api_key] = now_ts
@@ -1086,6 +1171,31 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 )
                 log_non_429_error(candidate_model, api_key, str(e))
                 mark_cooldown(api_key, duration=10.0)
+
+                # VPN Integration: Track consecutive connection errors / timeouts
+                try:
+                    VPN_CONSECUTIVE_ERRORS += 1
+
+                    rotation_config = load_rotation_config()
+                    vpn_mode = rotation_config.get("vpn_switching_mode", "disabled")
+                    vpn_threshold = int(rotation_config.get("vpn_errors_threshold", 5))
+
+                    if (
+                        vpn_mode == "error_threshold"
+                        and VPN_CONSECUTIVE_ERRORS >= vpn_threshold
+                    ):
+                        logger.warning(
+                            f"[VPN] Connection error threshold reached ({VPN_CONSECUTIVE_ERRORS}/{vpn_threshold}). Rotating VPN immediately..."
+                        )
+                        await rotate_vpn_on_the_fly("network error/timeout threshold")
+                        VPN_CONSECUTIVE_ERRORS = 0
+                        # Immediately retry the failed request
+                        continue
+                except Exception as ve:
+                    logger.error(
+                        f"[VPN] Error in network exception rotation handling: {ve}"
+                    )
+
                 continue
 
         if not model_success:

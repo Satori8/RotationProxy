@@ -117,9 +117,22 @@ def load_rotation_config() -> dict:
                 config["save_chat_logs"] = SAVE_CHAT_LOGS
                 needs_upgrade = True
 
+            # VPN Config Upgrade
+            if "vpn_switching_mode" not in config:
+                config["vpn_switching_mode"] = "disabled"
+                needs_upgrade = True
+            if "vpn_static_channel" not in config:
+                config["vpn_static_channel"] = 0
+                needs_upgrade = True
+            if "vpn_errors_threshold" not in config:
+                config["vpn_errors_threshold"] = 5
+                needs_upgrade = True
+
             if needs_upgrade:
                 save_rotation_config(config)
-                logger.info("Rotation config upgraded to latest resilient schema.")
+                logger.info(
+                    "Rotation config upgraded to latest resilient schema with VPN controls."
+                )
 
             return config
     except Exception as e:
@@ -136,6 +149,9 @@ def load_rotation_config() -> dict:
         "use_kaggle": False,
         "force_model": {"gemini-3.5-flash": "auto", "gemini-flash-lite-latest": "auto"},
         "save_chat_logs": False,
+        "vpn_switching_mode": "disabled",
+        "vpn_static_channel": 0,
+        "vpn_errors_threshold": 5,
     }
 
 
