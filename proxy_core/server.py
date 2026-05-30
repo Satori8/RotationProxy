@@ -443,21 +443,34 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
             url=url,
             headers=headers,
             content=json.dumps(test_body).encode("utf-8"),
+            timeout=10.0,
         )
-        resp = await client.send(req_out, timeout=10.0)
+        resp = await client.send(req_out)
         status_code = resp.status_code
+        try:
+            resp_text = resp.text
+        except Exception:
+            resp_text = "(failed to read response text)"
         await resp.aclose()
+
+        logger.info(f"[Test Model] Upstream status: {status_code}, body: {resp_text}")
 
         if status_code == 200:
             return {"status": "ok", "message": "Model responded successfully!"}
         elif status_code == 429:
-            return {"status": "rate_limited", "message": "Rate limit exceeded (429)"}
+            return {
+                "status": "rate_limited",
+                "message": f"Rate limit exceeded (429): {resp_text}",
+            }
         elif status_code == 404:
-            return {"status": "not_found", "message": "Model not found (404)"}
+            return {
+                "status": "not_found",
+                "message": f"Model not found (404): {resp_text}",
+            }
         else:
             return {
                 "status": "error",
-                "message": f"Server returned status {status_code}",
+                "message": f"Server returned status {status_code}: {resp_text}",
             }
     except Exception as e:
         return {"status": "error", "message": f"Network/Connection error: {e}"}

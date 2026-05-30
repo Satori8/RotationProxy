@@ -62,13 +62,13 @@ def load_rotation_config() -> dict:
     ]
     target_lite_list = [
         "gemini-flash-lite-latest",
-        "deepseek-v4-flash-free",
-        "mimo-v2.5-free",
-        "nemotron-3-super-free",
-        "google/gemini-2.5-flash:free",
-        "google/gemma-2-9b-it:free",
-        "meta-llama/llama-3.1-8b-instruct:free",
-        "qwen/qwen-2.5-coder-32b-instruct:free",
+        "deepseek/deepseek-v4-flash:free",
+        "liquid/lfm-2.5-1.2b-thinking:free",
+        "liquid/lfm-2.5-1.2b-instruct:free",
+        "nvidia/nemotron-nano-9b-v2:free",
+        "z-ai/glm-4.5-air:free",
+        "meta-llama/llama-3.2-3b-instruct:free",
+        "qwen/qwen3-coder:free",
     ]
 
     try:
