@@ -749,7 +749,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     mark_cooldown(api_key, duration=cooldown_duration)
 
                     logger.warning(
-                        f"[{provider_name}] Key #{key_index} 429 ({candidate_model}). Cooldown {cooldown_duration:.1f}s. Attempt {attempt}/{max_attempts}"
+                        f"[{provider_name}] Key #{key_index} 429 ({candidate_model}) on {request.method} {target_url}. Cooldown {cooldown_duration:.1f}s. Attempt {attempt}/{max_attempts}"
                     )
 
                     # Exponential retry sleep: 1, 2, 4, 8, 16, then 65s
@@ -775,7 +775,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     error_msg = f"HTTP {response.status_code}: Forbidden"
                     log_non_429_error(candidate_model, api_key, error_msg)
                     logger.error(
-                        f"[{provider_name}] Key #{key_index} 403 ({candidate_model}). Cooldown 24h"
+                        f"[{provider_name}] Key #{key_index} 403 ({candidate_model}) on {request.method} {target_url}. Cooldown 24h"
                     )
                     continue
                 elif response.status_code == 503:
@@ -786,7 +786,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
                     consecutive_503s += 1
                     logger.error(
-                        f"[{provider_name}] Key #{key_index} HTTP 503 ({candidate_model}). Consecutive 503s: {consecutive_503s}/10"
+                        f"[{provider_name}] Key #{key_index} HTTP 503 ({candidate_model}) on {request.method} {target_url}. Consecutive 503s: {consecutive_503s}/10"
                     )
 
                     if consecutive_503s >= 10:
@@ -807,7 +807,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     error_msg = f"HTTP {response.status_code}: Server Error"
                     log_non_429_error(candidate_model, api_key, error_msg)
                     logger.error(
-                        f"[{provider_name}] Key #{key_index} HTTP {response.status_code} ({candidate_model})"
+                        f"[{provider_name}] Key #{key_index} HTTP {response.status_code} ({candidate_model}) on {request.method} {target_url}"
                     )
                     continue
                 else:
@@ -815,13 +815,13 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     error_msg = f"HTTP {response.status_code}: Unexpected status"
                     log_non_429_error(candidate_model, api_key, error_msg)
                     logger.warning(
-                        f"[{provider_name}] Key #{key_index} HTTP {response.status_code} ({candidate_model})"
+                        f"[{provider_name}] Key #{key_index} HTTP {response.status_code} ({candidate_model}) on {request.method} {target_url}"
                     )
                     continue
 
             except Exception as e:
                 logger.error(
-                    f"[{provider_name}] Key #{key_index} conn error ({candidate_model}): {e}"
+                    f"[{provider_name}] Key #{key_index} conn error ({candidate_model}) on {request.method} {target_url}: {e}"
                 )
                 log_non_429_error(candidate_model, api_key, str(e))
                 mark_cooldown(api_key, duration=10.0)
