@@ -248,6 +248,12 @@ async def write_chat_log(
 
 
 def translate_payload_to_openai(gemini_payload: dict, target_model: str) -> dict:
+    if "messages" in gemini_payload:
+        # Already in OpenAI format, just update the model to target_model
+        new_payload = dict(gemini_payload)
+        new_payload["model"] = target_model
+        return new_payload
+
     openai_payload = {"model": target_model, "messages": []}
     if "contents" in gemini_payload:
         for content in gemini_payload["contents"]:
@@ -511,6 +517,12 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 target_path = path[5:]
             else:
                 target_path = path
+
+            # Strip duplicate 'v1/' prefix if the base URL ends with 'v1'
+            if target_path.startswith("v1/") and (
+                target_base_url.endswith("/v1") or target_base_url.endswith("/v1/")
+            ):
+                target_path = target_path[3:]
 
         target_url = f"{target_base_url}/{target_path}"
 
