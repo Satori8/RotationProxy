@@ -147,6 +147,29 @@ MODEL_SETTINGS = {
     },
 }
 
+THINKING_MODELS = {
+    "gemini-3.5-flash",
+    "gemini-3-flash",
+    "openrouter/owl-alpha",
+    "deepseek/deepseek-v4-flash:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "qwen/qwen3-coder:free",
+    "moonshotai/kimi-k2.6:free",
+    "deepseek/deepseek-r1:free",
+}
+
+QUICK_MODELS = {
+    "gemini-flash-lite-latest",
+    "gemini-2.0-flash-lite",
+    "deepseek-v4-flash-free",
+    "mimo-v2.5-free",
+    "nemotron-3-super-free",
+    "google/gemini-2.5-flash:free",
+    "google/gemma-2-9b-it:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
+    "qwen/qwen-2.5-coder-32b-instruct:free",
+}
+
 EXCLUDED_HEADERS = {
     "content-encoding",
     "content-length",
@@ -464,7 +487,17 @@ async def _transparent_proxy_attempt(request: Request, path: str):
     if USE_KAGGLE and "qwen3.6" not in candidates:
         candidates = list(candidates) + ["qwen3.6"]
 
-    forced_model = FORCE_MODEL.get(requested_model, "auto")
+    # Identify domain and check for manual override
+    forced_model = "auto"
+    if requested_model in THINKING_MODELS or requested_model == "gemini-3.5-flash":
+        forced_model = FORCE_MODEL.get("gemini-3.5-flash", "auto")
+    elif (
+        requested_model in QUICK_MODELS or requested_model == "gemini-flash-lite-latest"
+    ):
+        forced_model = FORCE_MODEL.get("gemini-flash-lite-latest", "auto")
+    else:
+        forced_model = FORCE_MODEL.get(requested_model, "auto")
+
     now = time.time()
     if forced_model != "auto":
         available_candidates = [forced_model]
