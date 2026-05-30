@@ -5,7 +5,7 @@ import argparse
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from proxy_core.rotation import load_kaggle_url
+from proxy_core.config import load_kaggle_url
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Resilient Gemini Proxy Server")
