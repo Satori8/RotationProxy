@@ -11,9 +11,50 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 
+
+class ColoredFormatter(logging.Formatter):
+    GREY = "\x1b[90m"
+    GREEN = "\x1b[32m"
+    YELLOW = "\x1b[33m"
+    RED = "\x1b[31m"
+    BOLD_RED = "\x1b[31;1m"
+    RESET = "\x1b[0m"
+
+    COLORS = {
+        logging.DEBUG: GREY,
+        logging.INFO: GREEN,
+        logging.WARNING: YELLOW,
+        logging.ERROR: RED,
+        logging.CRITICAL: BOLD_RED,
+    }
+
+    def format(self, record):
+        import copy
+
+        rec = copy.copy(record)
+        color = self.COLORS.get(rec.levelno, self.RESET)
+        rec.levelname = f"{color}{rec.levelname}{self.RESET}"
+        rec.msg = f"{color}{rec.msg}{self.RESET}"
+        return super().format(rec)
+
+
+# Configure loggers
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
+
+# Apply ColoredFormatter to console stream handlers
+for handler in logging.root.handlers:
+    if isinstance(handler, logging.StreamHandler):
+        handler.setFormatter(
+            ColoredFormatter("%(asctime)s [%(levelname)s] %(message)s")
+        )
+
+# Suppress verbose third-party loggers
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
 logger = logging.getLogger("proxy")
 
 log_queue = queue.Queue()
@@ -40,10 +81,26 @@ OPENROUTER_KEYS_FILE = (
     r"D:\Personal\myvault\90 Private\Sensitive\OpenRouter API Keys.md"
 )
 MISTRAL_KEYS_FILE = r"D:\Personal\myvault\90 Private\Sensitive\Mistral API Keys.md"
+LLM7_KEYS_FILE = r"D:\Personal\myvault\90 Private\Sensitive\LLM7 Api Keys.md"
 
 PRIMARY_MODEL = "gemini-3.5-flash"
 FALLBACK_MODEL = "gemini-3-flash-preview"
 RETRY_DELAY_SECONDS = 90
+
+import datetime
+
+PROCESS_SESSION_ID = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def get_session_id(request: Request) -> str:
+    """Extract a session/conversation ID from request headers or return a process-wide fallback."""
+    for h in ["x-session-id", "x-conversation-id", "session-id", "session_id"]:
+        val = request.headers.get(h)
+        if val:
+            sanitized = "".join(c for c in val if c.isalnum() or c in "-_")
+            if sanitized:
+                return sanitized
+    return f"session_{PROCESS_SESSION_ID}"
 
 
 def load_keys_from_file(filepath: str) -> list[str]:
@@ -74,17 +131,36 @@ def load_keys_from_file(filepath: str) -> list[str]:
 API_KEYS = load_keys_from_file(KEYS_FILE_PATH)
 OPENROUTER_KEYS = load_keys_from_file(OPENROUTER_KEYS_FILE)
 MISTRAL_KEYS = load_keys_from_file(MISTRAL_KEYS_FILE)
+LLM7_KEYS = load_keys_from_file(LLM7_KEYS_FILE)
 
 COOLDOWNS: dict[str, float] = {}
 CONSECUTIVE_429S: dict[str, int] = {}
+LAST_429_TIME: dict[str, float] = {}
+CONSECUTIVE_RPD_429S: dict[str, int] = {}
 IS_SEARCHING: dict[str, bool] = {}
 LAST_USED: dict[str, float] = {}
 LAST_REQUEST_TIME: dict[str, float] = {}
+
+
+def seconds_until_rpd_reset() -> float:
+    """Calculate the remaining seconds until Google's daily RPD reset at 08:00 UTC (midnight Pacific Time)."""
+    import datetime
+
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    reset_today = now_utc.replace(hour=8, minute=0, second=0, microsecond=0)
+    if now_utc >= reset_today:
+        reset_time = reset_today + datetime.timedelta(days=1)
+    else:
+        reset_time = reset_today
+    return (reset_time - now_utc).total_seconds()
+
+
 TARGET_BASE_URL = "https://generativelanguage.googleapis.com"
 
 # Global state hooks for GUI and CLI overrides
 FORCE_MODEL = {"gemini-3.5-flash": "auto", "gemini-flash-lite-latest": "auto"}
 USE_KAGGLE = False
+SAVE_CHAT_LOGS = False
 KAGGLE_BASE_URL = "https://fine-cable-outside-escape.trycloudflare.com/v1"
 
 ROTATION_CONFIG_PATH = "config_rotation.json"
@@ -225,21 +301,26 @@ def load_rotation_config() -> dict:
                 del config["rotation_lists"]["gemini-2.0-flash-lite"]
                 needs_upgrade = True
 
-            # Check if gemini-3.5-flash list needs update
-            if (
-                config["rotation_lists"].get("gemini-3.5-flash")
-                != target_gemini_35_list
-            ):
+            # Non-destructively ensure all standard candidates are present
+            if "gemini-3.5-flash" not in config["rotation_lists"]:
                 config["rotation_lists"]["gemini-3.5-flash"] = target_gemini_35_list
                 needs_upgrade = True
+            else:
+                current_35_list = config["rotation_lists"]["gemini-3.5-flash"]
+                for model in target_gemini_35_list:
+                    if model not in current_35_list:
+                        current_35_list.append(model)
+                        needs_upgrade = True
 
-            # Check if gemini-flash-lite-latest list needs update
-            if (
-                config["rotation_lists"].get("gemini-flash-lite-latest")
-                != target_lite_list
-            ):
+            if "gemini-flash-lite-latest" not in config["rotation_lists"]:
                 config["rotation_lists"]["gemini-flash-lite-latest"] = target_lite_list
                 needs_upgrade = True
+            else:
+                current_lite_list = config["rotation_lists"]["gemini-flash-lite-latest"]
+                for model in target_lite_list:
+                    if model not in current_lite_list:
+                        current_lite_list.append(model)
+                        needs_upgrade = True
 
             # Update any active model references
             if "active_models" in config:
@@ -251,6 +332,18 @@ def load_rotation_config() -> dict:
                         index = model_list.index("gemini-2.0-flash-lite")
                         model_list[index] = "gemini-flash-lite-latest"
                         needs_upgrade = True
+
+            if "use_kaggle" not in config:
+                config["use_kaggle"] = USE_KAGGLE
+                needs_upgrade = True
+
+            if "force_model" not in config:
+                config["force_model"] = FORCE_MODEL
+                needs_upgrade = True
+
+            if "save_chat_logs" not in config:
+                config["save_chat_logs"] = SAVE_CHAT_LOGS
+                needs_upgrade = True
 
             if needs_upgrade:
                 save_rotation_config(config)
@@ -269,6 +362,9 @@ def load_rotation_config() -> dict:
             "gemini-3.5-flash": target_gemini_35_list,
             "gemini-flash-lite-latest": target_lite_list,
         },
+        "use_kaggle": False,
+        "force_model": {"gemini-3.5-flash": "auto", "gemini-flash-lite-latest": "auto"},
+        "save_chat_logs": False,
     }
 
 
@@ -487,6 +583,187 @@ def translate_payload_to_openai(body_dict: dict, target_model: str) -> dict:
         }
 
 
+def extract_chat_messages(body_bytes: bytes) -> list[dict]:
+    """Extract messages in a unified format from request body."""
+    messages = []
+    try:
+        body_dict = json.loads(body_bytes)
+        # Check for systemInstruction (Gemini format) and insert it as system message
+        if "systemInstruction" in body_dict:
+            parts_text = []
+            si = body_dict["systemInstruction"]
+            if isinstance(si, dict) and "parts" in si:
+                for part in si["parts"]:
+                    if isinstance(part, str):
+                        parts_text.append(part)
+                    elif isinstance(part, dict) and "text" in part:
+                        parts_text.append(part["text"])
+            elif isinstance(si, str):
+                parts_text.append(si)
+            if parts_text:
+                messages.append({"role": "system", "content": "".join(parts_text)})
+
+        # Check if it has 'messages' (OpenAI format)
+        if "messages" in body_dict:
+            for msg in body_dict["messages"]:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                # If content is a list (multimodal / tools), extract text parts
+                if isinstance(content, list):
+                    text_parts = []
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            text_parts.append(part.get("text", ""))
+                        elif isinstance(part, str):
+                            text_parts.append(part)
+                    content = "".join(text_parts)
+                messages.append({"role": role, "content": content})
+        # Check if it has 'contents' (Gemini format)
+        elif "contents" in body_dict:
+            for content in body_dict["contents"]:
+                role = content.get("role", "user")
+                if role == "model":
+                    role = "assistant"
+
+                parts_text = []
+                if "parts" in content:
+                    for part in content["parts"]:
+                        if isinstance(part, str):
+                            parts_text.append(part)
+                        elif isinstance(part, dict):
+                            if "text" in part:
+                                parts_text.append(part["text"])
+                messages.append({"role": role, "content": "".join(parts_text)})
+    except Exception as e:
+        logger.debug(f"Could not parse chat messages from body: {e}")
+    return messages
+
+
+def extract_text_from_chunk(chunk_str: str, provider: str) -> str:
+    """Extract standard text from streamed response chunks."""
+    extracted = []
+    # If it's OpenAI/OpenRouter/Mistral/Kaggle (SSE)
+    if "data:" in chunk_str or provider in ("openrouter", "mistral", "kaggle", "llm7"):
+        for line in chunk_str.split("\n"):
+            line = line.strip()
+            if line.startswith("data:"):
+                data_content = line[5:].strip()
+                if data_content == "[DONE]":
+                    continue
+                try:
+                    data_json = json.loads(data_content)
+                    if "choices" in data_json and len(data_json["choices"]) > 0:
+                        choice = data_json["choices"][0]
+                        if "delta" in choice and "content" in choice["delta"]:
+                            extracted.append(choice["delta"]["content"])
+                        elif "text" in choice:
+                            extracted.append(choice["text"])
+                except Exception:
+                    pass
+    # If it's Gemini (native)
+    else:
+        # Try to parse as JSON first
+        try:
+            data_json = json.loads(chunk_str)
+            if isinstance(data_json, list):
+                for item in data_json:
+                    if "candidates" in item:
+                        for cand in item["candidates"]:
+                            if "content" in cand and "parts" in cand["content"]:
+                                for part in cand["content"]["parts"]:
+                                    if "text" in part:
+                                        extracted.append(part["text"])
+            elif "candidates" in data_json:
+                for cand in data_json["candidates"]:
+                    if "content" in cand and "parts" in cand["content"]:
+                        for part in cand["content"]["parts"]:
+                            if "text" in part:
+                                extracted.append(part["text"])
+        except Exception:
+            # Fallback regex search for JSON content text
+            import re
+
+            for match in re.finditer(r'"text"\s*:\s*"((?:[^"\\]|\\.)*)"', chunk_str):
+                try:
+                    val = json.loads(f'"{match.group(1)}"')
+                    extracted.append(val)
+                except Exception:
+                    pass
+            for match in re.finditer(
+                r'"content"\s*:\s*"((?:[^"\\\\]|\\\\.)*)"', chunk_str
+            ):
+                try:
+                    val = json.loads(f'"{match.group(1)}"')
+                    extracted.append(val)
+                except Exception:
+                    pass
+    return "".join(extracted)
+
+
+async def write_chat_log(
+    model: str, provider: str, messages: list[dict], response: str, session_id: str
+) -> None:
+    """Save the chat messages and the assistant's response in a new file inside the session folder."""
+    try:
+        log_dir = "chat_logs"
+        session_dir = os.path.join(log_dir, session_id)
+        if not os.path.exists(session_dir):
+            os.makedirs(session_dir, exist_ok=True)
+
+        import datetime
+        import glob
+
+        # Count existing files in the session folder to determine the serial number
+        try:
+            existing_files = [
+                f
+                for f in os.listdir(session_dir)
+                if os.path.isfile(os.path.join(session_dir, f))
+            ]
+            file_index = len(existing_files) + 1
+        except Exception:
+            file_index = 1
+
+        now = datetime.datetime.now()
+        timestamp = now.strftime("%Y%m%d_%H%M%S_%f")[:-3]
+
+        # Sanitize model name to prevent path traversal/invalid characters
+        safe_model = "".join(c if c.isalnum() or c in "-_" else "_" for c in model)
+        log_file = os.path.join(
+            session_dir, f"{file_index:03d}_req_{timestamp}_{safe_model}.txt"
+        )
+
+        entry = []
+        if messages:
+            for msg in messages:
+                role = msg.get("role", "unknown").upper()
+                content = msg.get("content", "").strip()
+                if content:
+                    entry.append(f"[{role}]:")
+                    entry.append(content)
+                    entry.append("")
+        else:
+            entry.append("[REQUEST]: (Empty or unparseable payload)")
+            entry.append("")
+
+        if response:
+            entry.append("[RESPONSE]:")
+            entry.append(response.strip())
+            entry.append("")
+
+        log_text = "\n".join(entry)
+
+        # Write to the file asynchronously using a thread pool to avoid blocking ASGI event loop
+        def do_write():
+            with open(log_file, "w", encoding="utf-8") as f:
+                f.write(log_text)
+
+        await asyncio.to_thread(do_write)
+        logger.info(f"Saved chat log to {log_file}")
+    except Exception as e:
+        logger.error(f"Failed to write chat log: {e}")
+
+
 EXCLUDED_HEADERS = {
     "content-length",
     "transfer-encoding",
@@ -528,9 +805,23 @@ app.add_middleware(
     "/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
 )
 async def transparent_proxy(request: Request, path: str):
+    max_restarts = 10
+    for restart_attempt in range(max_restarts):
+        res = await _transparent_proxy_attempt(request, path)
+        if res == "RESTART":
+            continue
+        return res
+    return JSONResponse(
+        status_code=503,
+        content={"error": {"message": "Too many model switches in a single request."}},
+    )
+
+
+async def _transparent_proxy_attempt(request: Request, path: str):
     client: httpx.AsyncClient = request.app.state.client
     body = await request.body()
     query_params = dict(request.query_params)
+    session_id = get_session_id(request)
 
     # Динамическая маршрутизация провайдеров по первому сегменту пути
     if path.startswith("openrouter/"):
@@ -543,6 +834,11 @@ async def transparent_proxy(request: Request, path: str):
         current_path = path[8:]
         keys_pool = MISTRAL_KEYS
         provider_name = "mistral"
+    elif path.startswith("llm7/"):
+        target_base = "https://api.llm7.io/v1"
+        current_path = path[5:]
+        keys_pool = LLM7_KEYS
+        provider_name = "llm7"
 
     else:
         target_base = TARGET_BASE_URL
@@ -571,6 +867,14 @@ async def transparent_proxy(request: Request, path: str):
     # Implement the new model rotation and recovery logic
     requested_model = get_requested_model(path, body)
     rotation_config = load_rotation_config()
+
+    # Synchronize global settings from the loaded config file so the subprocess gets GUI changes
+    global USE_KAGGLE, FORCE_MODEL, SAVE_CHAT_LOGS
+    USE_KAGGLE = rotation_config.get("use_kaggle", USE_KAGGLE)
+    SAVE_CHAT_LOGS = rotation_config.get("save_chat_logs", SAVE_CHAT_LOGS)
+    config_force_model = rotation_config.get("force_model", {})
+    for k, v in config_force_model.items():
+        FORCE_MODEL[k] = v
 
     # Get candidate list for the requested model
     candidates = rotation_config["rotation_lists"].get(
@@ -663,6 +967,16 @@ async def transparent_proxy(request: Request, path: str):
                 logger.info(
                     f"Dynamically registered Mistral settings for model '{candidate_model}'"
                 )
+            elif path.startswith("llm7/"):
+                MODEL_SETTINGS[candidate_model] = {
+                    "provider": "llm7",
+                    "base_url": "https://api.llm7.io/v1",
+                    "keys_pool": LLM7_KEYS,
+                    "target_model": candidate_model,
+                }
+                logger.info(
+                    f"Dynamically registered LLM7 settings for model '{candidate_model}'"
+                )
             else:
                 # Default to gemini provider
                 MODEL_SETTINGS[candidate_model] = {
@@ -703,7 +1017,8 @@ async def transparent_proxy(request: Request, path: str):
                 target_path = path[11:]
             elif path.startswith("mistral/"):
                 target_path = path[8:]
-
+            elif path.startswith("llm7/"):
+                target_path = path[5:]
             else:
                 target_path = path
 
@@ -720,23 +1035,10 @@ async def transparent_proxy(request: Request, path: str):
         available_keys = [k for k in keys_pool if COOLDOWNS.get(k, 0.0) < now]
 
         if not available_keys:
-            # Check if we should wait for the shortest cooldown
-            attempt_keys = sorted(keys_pool, key=lambda k: COOLDOWNS.get(k, 0.0))
-            shortest_key = attempt_keys[0]
-            expiry = COOLDOWNS.get(shortest_key, 0.0)
-            wait_time = expiry - now
-
-            if 0 < wait_time <= 5.0:
-                logger.info(
-                    f"[{provider_name}] Waiting {wait_time:.2f}s for key release for model '{candidate_model}'..."
-                )
-                await asyncio.sleep(wait_time)
-                available_keys = [shortest_key]
-            else:
-                logger.warning(
-                    f"[{provider_name}] All keys for model '{candidate_model}' are on cooldown (shortest wait: {wait_time:.1f}s). Skipping."
-                )
-                continue
+            logger.warning(
+                f"[{provider_name}] All keys for model '{candidate_model}' are on cooldown. Rotating model."
+            )
+            continue
         else:
             # Sort keys by last used time (oldest first)
             available_keys = sorted(available_keys, key=lambda k: LAST_USED.get(k, 0.0))
@@ -751,6 +1053,17 @@ async def transparent_proxy(request: Request, path: str):
                     f"[{provider_name}] Client disconnected during key search for model '{candidate_model}'. Aborting."
                 )
                 break
+
+            # Check if manual switch detected
+            current_config = load_rotation_config()
+            current_force_model = current_config.get("force_model", {})
+            current_forced_model = current_force_model.get(requested_model, "auto")
+            if current_forced_model != forced_model:
+                logger.info(
+                    f"[{provider_name}] Manual model switch detected during 429 retry sequence: "
+                    f"'{forced_model}' -> '{current_forced_model}'. Restarting routing."
+                )
+                return "RESTART"
 
             key_index = keys_pool.index(api_key) + 1
 
@@ -768,14 +1081,14 @@ async def transparent_proxy(request: Request, path: str):
                 )
             }
 
-            if provider_name in ("openrouter", "mistral"):
+            if provider_name in ("openrouter", "mistral", "llm7"):
                 headers["authorization"] = f"Bearer {api_key}"
             else:
                 headers["x-goog-api-key"] = api_key
 
             # For OpenAI-compatible endpoints, translate the payload
             request_body = body
-            if provider_name in ("openrouter", "mistral"):
+            if provider_name in ("openrouter", "mistral", "llm7"):
                 try:
                     body_dict = json.loads(body)
                     translated_body = translate_payload_to_openai(
@@ -810,8 +1123,8 @@ async def transparent_proxy(request: Request, path: str):
                     # Success! Reset failure counter for this model
                     rotation_config["consecutive_model_failures"][candidate_model] = 0
 
-                    # Reset consecutive 429 counter for this key
-                    CONSECUTIVE_429S[api_key] = 0
+                    # Reset consecutive 429 counter for this provider
+                    CONSECUTIVE_429S[provider_name] = 0
 
                     # If we successfully used a higher-priority model after fallback, update state
                     current_active_index = (
@@ -838,12 +1151,48 @@ async def transparent_proxy(request: Request, path: str):
                         if k.lower() not in EXCLUDED_HEADERS
                     }
 
+                    # Pre-extract messages from request body (done before streaming starts)
+                    req_messages = []
+                    if SAVE_CHAT_LOGS:
+                        req_messages = extract_chat_messages(body)
+
+                    # Initialize response text buffer to reconstruct completion
+                    response_text_buffer = []
+
                     async def stream_generator():
                         try:
                             async for chunk in response.aiter_bytes():
+                                if SAVE_CHAT_LOGS:
+                                    try:
+                                        chunk_str = chunk.decode(
+                                            "utf-8", errors="ignore"
+                                        )
+                                        text_part = extract_text_from_chunk(
+                                            chunk_str, provider_name
+                                        )
+                                        if text_part:
+                                            response_text_buffer.append(text_part)
+                                    except Exception as ce:
+                                        logger.debug(
+                                            f"Error extracting text from chunk: {ce}"
+                                        )
                                 yield chunk
                         finally:
                             await response.aclose()
+                            if SAVE_CHAT_LOGS and (
+                                req_messages or response_text_buffer
+                            ):
+                                response_text = "".join(response_text_buffer)
+                                # Asynchronously write the chat log in a background task
+                                asyncio.create_task(
+                                    write_chat_log(
+                                        model=candidate_model,
+                                        provider=provider_name,
+                                        messages=req_messages,
+                                        response=response_text,
+                                        session_id=session_id,
+                                    )
+                                )
 
                     return StreamingResponse(
                         stream_generator(),
@@ -853,27 +1202,57 @@ async def transparent_proxy(request: Request, path: str):
                 elif response.status_code == 429:
                     await response.aclose()
 
-                    # Track consecutive 429s for this key to apply incremental cooldown and sleep
-                    consecutive_429 = CONSECUTIVE_429S.get(api_key, 0) + 1
-                    CONSECUTIVE_429S[api_key] = consecutive_429
+                    # Track consecutive 429s for this provider to apply incremental cooldown and sleep
+                    consecutive_429 = CONSECUTIVE_429S.get(provider_name, 0) + 1
+                    CONSECUTIVE_429S[provider_name] = consecutive_429
 
-                    # Incremental cooldown: base RETRY_DELAY_SECONDS scaled by consecutive 429 occurrences
-                    cooldown_duration = RETRY_DELAY_SECONDS * (
-                        2 ** (consecutive_429 - 1)
-                    )
-                    cooldown_duration = min(
-                        cooldown_duration, 86400.0
-                    )  # Cap at 24 hours
+                    # Daily Limit (Requests Per Day / RPD) detection logic
+                    now_ts = time.time()
+                    prev_429_ts = LAST_429_TIME.get(api_key, 0.0)
+                    LAST_429_TIME[api_key] = now_ts
+
+                    # Key cooldown (long cooldown) is always RETRY_DELAY_SECONDS (90s)
+                    cooldown_duration = RETRY_DELAY_SECONDS
+
+                    if prev_429_ts > 0.0:
+                        time_diff = now_ts - prev_429_ts
+                        if time_diff > 300.0:  # more than 5 minutes since previous 429
+                            rpd_consec = CONSECUTIVE_RPD_429S.get(api_key, 0) + 1
+                            CONSECUTIVE_RPD_429S[api_key] = rpd_consec
+                            if rpd_consec >= 2:
+                                if provider_name == "gemini":
+                                    cooldown_duration = seconds_until_rpd_reset()
+                                    logger.error(
+                                        f"[{provider_name}] Key #{key_index} hit RPD daily limit (consecutive 429s after >5 min 2 times in a row). "
+                                        f"Putting on cooldown until midnight Pacific Time reset (wait {cooldown_duration / 3600:.2f}h)."
+                                    )
+                                else:
+                                    cooldown_duration = (
+                                        86400.0  # 24 hours for non-Gemini
+                                    )
+                                    logger.error(
+                                        f"[{provider_name}] Key #{key_index} hit daily limit (consecutive 429s after >5 min 2 times in a row). "
+                                        f"Putting on 24-hour cooldown."
+                                    )
+                                # Reset RPD counter so next daily cycle starts fresh
+                                CONSECUTIVE_RPD_429S[api_key] = 0
+                        else:
+                            # Short-term 429 (within 5 minutes) - do not modify RPD consec counter
+                            pass
+                    else:
+                        # First 429 seen - set RPD consec count to 1
+                        CONSECUTIVE_RPD_429S[api_key] = 1
+
                     mark_cooldown(api_key, duration=cooldown_duration)
 
                     logger.warning(
                         f"[{provider_name}] Key #{key_index} hit 429 for model '{candidate_model}'. "
-                        f"Consecutive 429s: {consecutive_429}. Cooldown set to {cooldown_duration}s. "
+                        f"Consecutive 429s: {consecutive_429}. Cooldown set to {cooldown_duration:.1f}s. "
                         f"Attempt {attempt}/{max_attempts}"
                     )
 
                     # Sleep incrementally before retrying the next key to avoid immediate rate limit spam on the provider
-                    retry_sleep = min(1.5 * consecutive_429, 10.0)
+                    retry_sleep = min(1.5 * consecutive_429, 15.0)
                     logger.info(
                         f"[{provider_name}] Sleeping for {retry_sleep:.2f}s before trying next key to prevent rate limit spam..."
                     )
@@ -916,40 +1295,25 @@ async def transparent_proxy(request: Request, path: str):
 
         # If we get here, all keys for this candidate model failed
         if not model_success:
-            # Increment failure counter
-            current_failures = rotation_config["consecutive_model_failures"].get(
-                candidate_model, 0
+            # Put model on 24-hour cooldown immediately (1 failure is enough)
+            rotation_config["model_cooldowns"][candidate_model] = now + 86400.0
+            rotation_config["consecutive_model_failures"][candidate_model] = 0
+
+            # Find next available candidate
+            current_index = (
+                candidates.index(candidate_model)
+                if candidate_model in candidates
+                else -1
             )
-            rotation_config["consecutive_model_failures"][candidate_model] = (
-                current_failures + 1
+            next_index = (current_index + 1) % len(candidates)
+
+            # Update fallback switch time
+            rotation_config["last_fallback_switch_time"] = now
+
+            save_rotation_config(rotation_config)
+            logger.warning(
+                f"Model '{candidate_model}' failed. Put on 24-hour cooldown and switching to next candidate."
             )
-
-            # Check if we've reached 3 consecutive failures
-            if current_failures + 1 >= 3:
-                # Put model on 24-hour cooldown
-                rotation_config["model_cooldowns"][candidate_model] = now + 86400.0
-                rotation_config["consecutive_model_failures"][candidate_model] = 0
-
-                # Find next available candidate
-                current_index = (
-                    candidates.index(candidate_model)
-                    if candidate_model in candidates
-                    else -1
-                )
-                next_index = (current_index + 1) % len(candidates)
-
-                # Update fallback switch time
-                rotation_config["last_fallback_switch_time"] = now
-
-                save_rotation_config(rotation_config)
-                logger.warning(
-                    f"Model '{candidate_model}' failed 3 times. Put on 24-hour cooldown and switching to next candidate."
-                )
-            else:
-                save_rotation_config(rotation_config)
-                logger.warning(
-                    f"Model '{candidate_model}' failed. Consecutive failures: {current_failures + 1}/3"
-                )
 
     # If we get here, all candidate models failed
     return JSONResponse(
@@ -1000,6 +1364,15 @@ class ProxyGUI(ctk.CTk):
         self.server_process = None
         self.stdout_thread = None
         self.stderr_thread = None
+
+        # Load rotation config to sync GUI with saved settings
+        config = load_rotation_config()
+        global USE_KAGGLE, FORCE_MODEL, SAVE_CHAT_LOGS
+        USE_KAGGLE = config.get("use_kaggle", USE_KAGGLE)
+        SAVE_CHAT_LOGS = config.get("save_chat_logs", SAVE_CHAT_LOGS)
+        config_force_model = config.get("force_model", {})
+        for k, v in config_force_model.items():
+            FORCE_MODEL[k] = v
 
         self.title("Resilient Key Rotation Proxy")
         self.geometry("900x600")
@@ -1054,6 +1427,11 @@ class ProxyGUI(ctk.CTk):
             self.left_panel, values=thinking_models, command=self.on_thinking_select
         )
         self.thinking_select.pack(fill="x", padx=20, pady=(2, 15))
+        thinking_val = FORCE_MODEL.get("gemini-3.5-flash", "auto")
+        if thinking_val == "auto":
+            self.thinking_select.set("Auto (Rotation)")
+        else:
+            self.thinking_select.set(thinking_val)
 
         # Quick Domain Selector (Auto + Candidates)
         ctk.CTkLabel(
@@ -1076,6 +1454,11 @@ class ProxyGUI(ctk.CTk):
             self.left_panel, values=quick_models, command=self.on_quick_select
         )
         self.quick_select.pack(fill="x", padx=20, pady=(2, 15))
+        quick_val = FORCE_MODEL.get("gemini-flash-lite-latest", "auto")
+        if quick_val == "auto":
+            self.quick_select.set("Auto (Rotation)")
+        else:
+            self.quick_select.set(quick_val)
 
         # Separator line
         self.sep = ctk.CTkFrame(self.left_panel, height=2, fg_color="gray30")
@@ -1090,7 +1473,18 @@ class ProxyGUI(ctk.CTk):
             command=self.on_kaggle_toggle,
             font=ctk.CTkFont(size=12, weight="bold"),
         )
-        self.kaggle_checkbox.pack(anchor="w", padx=20, pady=(5, 10))
+        self.kaggle_checkbox.pack(anchor="w", padx=20, pady=(5, 5))
+
+        # Chat Logs Toggle
+        self.chat_log_var = ctk.BooleanVar(value=SAVE_CHAT_LOGS)
+        self.chat_log_checkbox = ctk.CTkCheckBox(
+            self.left_panel,
+            text="Save Chat Logs",
+            variable=self.chat_log_var,
+            command=self.on_chat_log_toggle,
+            font=ctk.CTkFont(size=12, weight="bold"),
+        )
+        self.chat_log_checkbox.pack(anchor="w", padx=20, pady=(5, 10))
 
         # Kaggle URL field
         ctk.CTkLabel(
@@ -1230,6 +1624,14 @@ class ProxyGUI(ctk.CTk):
             logger.info(f"Thinking domain priority model set to: {val}")
             log_queue.put(f"[GUI] Thinking domain priority model set to: {val}")
 
+        # Save to rotation config
+        try:
+            config = load_rotation_config()
+            config["force_model"] = FORCE_MODEL
+            save_rotation_config(config)
+        except Exception as e:
+            logger.error(f"Failed to save force_model option: {e}")
+
     def on_quick_select(self, val):
         if val == "Auto (Rotation)":
             FORCE_MODEL["gemini-flash-lite-latest"] = "auto"
@@ -1240,11 +1642,41 @@ class ProxyGUI(ctk.CTk):
             logger.info(f"Quick domain priority model set to: {val}")
             log_queue.put(f"[GUI] Quick domain priority model set to: {val}")
 
+        # Save to rotation config
+        try:
+            config = load_rotation_config()
+            config["force_model"] = FORCE_MODEL
+            save_rotation_config(config)
+        except Exception as e:
+            logger.error(f"Failed to save force_model option: {e}")
+
     def on_kaggle_toggle(self):
         global USE_KAGGLE
         USE_KAGGLE = self.kaggle_var.get()
         logger.info(f"Use Kaggle (qwen3.6) set to: {USE_KAGGLE}")
         log_queue.put(f"[GUI] Use Kaggle (qwen3.6) set to: {USE_KAGGLE}")
+
+        # Save to rotation config
+        try:
+            config = load_rotation_config()
+            config["use_kaggle"] = USE_KAGGLE
+            save_rotation_config(config)
+        except Exception as e:
+            logger.error(f"Failed to save use_kaggle option: {e}")
+
+    def on_chat_log_toggle(self):
+        global SAVE_CHAT_LOGS
+        SAVE_CHAT_LOGS = self.chat_log_var.get()
+        logger.info(f"Save Chat Logs set to: {SAVE_CHAT_LOGS}")
+        log_queue.put(f"[GUI] Save Chat Logs set to: {SAVE_CHAT_LOGS}")
+
+        # Save to rotation config
+        try:
+            config = load_rotation_config()
+            config["save_chat_logs"] = SAVE_CHAT_LOGS
+            save_rotation_config(config)
+        except Exception as e:
+            logger.error(f"Failed to save save_chat_logs option: {e}")
 
     def on_save_url(self):
         global KAGGLE_BASE_URL
