@@ -306,21 +306,27 @@ def translate_openai_chunk_to_gemini(openai_chunk_str: str) -> str:
             if choices:
                 delta = choices[0].get("delta", {})
                 content = delta.get("content", "")
-                finish_reason = choices[0].get("finish_reason", "STOP")
-                if finish_reason:
-                    finish_reason = finish_reason.upper()
-                else:
-                    finish_reason = "STOP"
+
+                openai_finish_reason = choices[0].get("finish_reason")
+                gemini_finish_reason = None
+                if openai_finish_reason == "stop":
+                    gemini_finish_reason = "STOP"
+                elif openai_finish_reason == "length":
+                    gemini_finish_reason = "MAX_TOKENS"
+                elif openai_finish_reason is not None:
+                    gemini_finish_reason = str(openai_finish_reason).upper()
 
                 gemini_data = {
                     "candidates": [
                         {
                             "content": {"parts": [{"text": content}], "role": "model"},
-                            "finishReason": finish_reason,
                             "index": 0,
                         }
                     ]
                 }
+                if gemini_finish_reason:
+                    gemini_data["candidates"][0]["finishReason"] = gemini_finish_reason
+
                 return f"data: {json.dumps(gemini_data)}"
         except Exception:
             pass
