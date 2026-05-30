@@ -416,12 +416,51 @@ def mark_cooldown(key: str, duration: float = 60.0) -> None:
     COOLDOWNS[key] = time.time() + duration
 
 
+def get_active_vpn_client(
+    request: Request, vpn_mode: str, vpn_static_channel: int, current_vpn_index: int
+) -> httpx.AsyncClient:
+    """Resolve the appropriate AsyncClient based on the current VPN switching configuration."""
+    vpn_clients = request.app.state.vpn_clients
+    if vpn_mode == "disabled":
+        if 0 < vpn_static_channel <= 6:
+            return vpn_clients.get(vpn_static_channel, vpn_clients[0])
+        return vpn_clients[0]
+    else:
+        # For 'every_request' or 'error_threshold' modes, use current_vpn_index
+        return vpn_clients.get(current_vpn_index, vpn_clients[0])
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     limits = httpx.Limits(max_keepalive_connections=100, max_connections=200)
-    app.state.client = httpx.AsyncClient(timeout=300.0, limits=limits)
+
+    # Initialize 7 clients: index 0 (unbound) + indexes 1-6 (bound to corresponding VPN local IPs)
+    app.state.vpn_clients = {0: httpx.AsyncClient(timeout=300.0, limits=limits)}
+    for i in range(1, 7):
+        try:
+            transport = httpx.AsyncHTTPTransport(local_address=f"10.8.0.1{i}")
+            app.state.vpn_clients[i] = httpx.AsyncClient(
+                transport=transport, timeout=300.0, limits=limits
+            )
+            logger.info(
+                f"[Lifespan] Initialized bound HTTP client for VPN {i} (10.8.0.1{i})"
+            )
+        except Exception as e:
+            logger.error(
+                f"[Lifespan] Failed to bind client to VPN IP 10.8.0.1{i} (falling back to unbound): {e}"
+            )
+            app.state.vpn_clients[i] = httpx.AsyncClient(timeout=300.0, limits=limits)
+
+    # Maintain app.state.client as default fallback
+    app.state.client = app.state.vpn_clients[0]
+
     yield
-    await app.state.client.aclose()
+
+    for index, client in app.state.vpn_clients.items():
+        try:
+            await client.aclose()
+        except Exception as ce:
+            logger.error(f"[Lifespan] Error closing client {index}: {ce}")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -478,7 +517,12 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
     test_body = {"model": model_id, "messages": [{"role": "user", "content": "Hi"}]}
 
     url = f"{base_url}/chat/completions"
-    client = request.app.state.client
+
+    # Resolve the correct bound client for the test request
+    rotation_config = load_rotation_config()
+    vpn_mode = rotation_config.get("vpn_switching_mode", "disabled")
+    vpn_static = int(rotation_config.get("vpn_static_channel", 0))
+    client = get_active_vpn_client(request, vpn_mode, vpn_static, VPN_CURRENT_INDEX)
 
     start_time = time.perf_counter()
     try:
@@ -570,7 +614,6 @@ async def transparent_proxy(request: Request, path: str):
 
 async def _transparent_proxy_attempt(request: Request, path: str):
     global VPN_CONSECUTIVE_ERRORS, VPN_CURRENT_INDEX
-    client = request.app.state.client
     body = await request.body()
     query_params = dict(request.query_params)
     session_id = get_session_id(request)
@@ -878,6 +921,23 @@ async def _transparent_proxy_attempt(request: Request, path: str):
             }
 
             try:
+                # Resolve and rotate VPN client on demand
+                try:
+                    rotation_config = load_rotation_config()
+                    vpn_mode = rotation_config.get("vpn_switching_mode", "disabled")
+                    vpn_static = int(rotation_config.get("vpn_static_channel", 0))
+
+                    if vpn_mode == "every_request":
+                        await rotate_vpn_on_the_fly("every_request mode trigger")
+
+                    # Pick the appropriate client (either default, static, or active rotating index)
+                    client = get_active_vpn_client(
+                        request, vpn_mode, vpn_static, VPN_CURRENT_INDEX
+                    )
+                except Exception as ve:
+                    logger.error(f"[VPN] Error during client resolution: {ve}")
+                    client = request.app.state.vpn_clients[0]  # Safe fallback
+
                 req = client.build_request(
                     method=request.method,
                     url=target_url,
@@ -887,15 +947,6 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     if request.method in ("POST", "PUT", "PATCH")
                     else None,
                 )
-
-                # VPN rotation on "every_request" mode right before dispatching
-                try:
-                    rotation_config = load_rotation_config()
-                    vpn_mode = rotation_config.get("vpn_switching_mode", "disabled")
-                    if vpn_mode == "every_request":
-                        await rotate_vpn_on_the_fly("every_request mode trigger")
-                except Exception as ve:
-                    logger.error(f"[VPN] Error in pre-request VPN rotation: {ve}")
 
                 LAST_USED[api_key] = time.time()
                 response = await client.send(req, stream=True)

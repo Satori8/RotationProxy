@@ -591,8 +591,7 @@ class ProxyGUI(ctk.CTk):
         self.stop_server_subprocess()
         if hasattr(self, "vpn_manager") and self.vpn_manager is not None:
             try:
-                logger.info("[GUI] Cleaning up VPN tunnels and routing on close...")
-                self.vpn_manager.disable_system_routing()
+                logger.info("[GUI] Cleaning up VPN tunnels on close...")
                 self.vpn_manager.uninstall_all_services()
             except Exception as e:
                 logger.error(f"[GUI] Error during VPN cleanup on close: {e}")
@@ -1112,7 +1111,7 @@ class ProxyGUI(ctk.CTk):
         log_queue.put(f"[GUI] Saved VPN switching mode to: {mode}")
 
     def on_vpn_static_change(self, val):
-        """Handle manual static VPN routing change on a background thread."""
+        """Handle manual static VPN routing change (now isolated to proxy socket binding)."""
         config = load_rotation_config()
         if "VPN " in val:
             try:
@@ -1124,39 +1123,7 @@ class ProxyGUI(ctk.CTk):
 
         config["vpn_static_channel"] = channel
         save_rotation_config(config)
-
-        if not hasattr(self, "vpn_manager") or self.vpn_manager is None:
-            log_queue.put("[GUI] [ERROR] VPN Manager not loaded.")
-            return
-
-        if not self.vpn_manager.is_admin():
-            log_queue.put(
-                "[GUI] [SYSTEM] WireGuard requires Administrator privileges to change routes."
-            )
-            self.vpn_manager.elevate()
-            return
-
-        log_queue.put(
-            f"[GUI] [SYSTEM] Changing system routing default gateway to {val}..."
-        )
-
-        def run_static_switch():
-            try:
-                if channel == 0:
-                    self.vpn_manager.disable_system_routing()
-                    log_queue.put(
-                        "[GUI] [SUCCESS] Default routing restored to home gateway."
-                    )
-                else:
-                    self.vpn_manager.enable_system_routing_via(channel)
-                    log_queue.put(
-                        f"[GUI] [SUCCESS] System routing successfully directed through VPN {channel}!"
-                    )
-            except Exception as e:
-                logger.error(f"[GUI] Static switch error: {e}")
-                log_queue.put(f"[GUI] [ERROR] Static switch error: {e}")
-
-        threading.Thread(target=run_static_switch, daemon=True).start()
+        log_queue.put(f"[GUI] [SUCCESS] Static proxy socket binding updated: {val}.")
 
     def on_vpn_threshold_save(self):
         """Save errors threshold when clicked."""
