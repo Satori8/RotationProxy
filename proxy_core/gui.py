@@ -295,7 +295,7 @@ class ProxyGUI(ctk.CTk):
             hover_color="#3498DB",
             command=self.on_save_active_rotation,
         )
-        self.save_rotation_btn.grid(row=2, column=0, padx=10, pady=10, fill="x")
+        self.save_rotation_btn.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
 
         # Load active rotation models on start
         self.active_rotation_list = []
