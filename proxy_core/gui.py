@@ -104,6 +104,8 @@ class ProxyGUI(ctk.CTk):
             "Auto (Rotation)",
             "gemini-3.5-flash",
             "gemini-3-flash",
+            "openrouter/owl-alpha",
+            "deepseek/deepseek-v4-flash:free",
             "deepseek/deepseek-r1:free",
             "qwen/qwen-2.5-72b-instruct:free",
             "meta-llama/llama-3.3-70b-instruct:free",

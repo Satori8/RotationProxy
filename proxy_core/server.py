@@ -79,6 +79,12 @@ MODEL_SETTINGS = {
         "keys_pool": API_KEYS,
         "target_model": "gemini-3-flash-preview",
     },
+    "openrouter/owl-alpha": {
+        "provider": "openrouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "keys_pool": OPENROUTER_KEYS,
+        "target_model": "openrouter/owl-alpha",
+    },
     "deepseek-v4-flash": {
         "provider": "openrouter",
         "base_url": "https://openrouter.ai/api/v1",
@@ -583,6 +589,8 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 not in (
                     "host",
                     "content-length",
+                    "content-encoding",
+                    "accept-encoding",
                     "authorization",
                     "x-goog-api-key",
                     "x-api-key",
