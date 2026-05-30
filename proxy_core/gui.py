@@ -9,6 +9,9 @@ import re
 import datetime
 import customtkinter as ctk
 
+
+ANSI_ESCAPE = re.compile(r"\x1b(?:[@-Z\\-_]|\\[[0-9?]*[ -/]*[@-~])")
+
 from proxy_core.config import (
     load_rotation_config,
     save_rotation_config,
@@ -56,9 +59,6 @@ class ProxyGUI(ctk.CTk):
         self.stderr_thread = None
 
         config = load_rotation_config()
-        global USE_KAGGLE, FORCE_MODEL, SAVE_CHAT_LOGS
-        USE_KAGGLE = config.get("use_kaggle", USE_KAGGLE)
-        SAVE_CHAT_LOGS = config.get("save_chat_logs", SAVE_CHAT_LOGS)
         config_force_model = config.get("force_model", {})
         for k, v in config_force_model.items():
             FORCE_MODEL[k] = v
@@ -147,7 +147,7 @@ class ProxyGUI(ctk.CTk):
         self.sep = ctk.CTkFrame(self.left_panel, height=2, fg_color="gray30")
         self.sep.pack(fill="x", padx=10, pady=10)
 
-        self.kaggle_var = ctk.BooleanVar(value=USE_KAGGLE)
+        self.kaggle_var = ctk.BooleanVar(value=config.get("use_kaggle", False))
         self.kaggle_checkbox = ctk.CTkCheckBox(
             self.left_panel,
             text="Use Kaggle (qwen3.6)",
@@ -157,7 +157,7 @@ class ProxyGUI(ctk.CTk):
         )
         self.kaggle_checkbox.pack(anchor="w", padx=20, pady=(5, 5))
 
-        self.chat_log_var = ctk.BooleanVar(value=SAVE_CHAT_LOGS)
+        self.chat_log_var = ctk.BooleanVar(value=config.get("save_chat_logs", False))
         self.chat_log_checkbox = ctk.CTkCheckBox(
             self.left_panel,
             text="Save Chat Logs",
@@ -201,6 +201,7 @@ class ProxyGUI(ctk.CTk):
         self.open_folder_btn.pack(fill="x", padx=20, pady=(10, 10))
 
         self.right_panel = ctk.CTkFrame(self, corner_radius=10)
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.right_panel.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
         self.right_panel.grid_columnconfigure(0, weight=1)
         self.right_panel.grid_rowconfigure(0, weight=1)
@@ -292,7 +293,7 @@ class ProxyGUI(ctk.CTk):
 
     def on_open_folder(self):
         try:
-            folder = os.path.dirname(os.path.abspath(__file__))
+            folder = os.getcwd()
             if os.name == "nt":
                 os.startfile(folder)
             else:
@@ -306,11 +307,10 @@ class ProxyGUI(ctk.CTk):
         self.log_textbox.delete("1.0", "end")
 
     def poll_queue(self):
-        ansi_escape = re.compile(r"\x1b(?:[@-Z\\-_]|\\[[0-?]*[ -/]*[@-~])")
         while not log_queue.empty():
             try:
                 msg = log_queue.get_nowait()
-                msg = ansi_escape.sub("", msg)
+                msg = ANSI_ESCAPE.sub("", msg)
                 self.log_textbox.insert("end", msg + "\n")
                 self.log_textbox.see("end")
             except Exception:
@@ -368,7 +368,7 @@ class ProxyGUI(ctk.CTk):
                     f"[GUI] [WARNING] Proxy server subprocess died with code {ret_code}."
                 )
                 timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                ERROR_LOG_PATH = "error_keys_log.json"
+                ERROR_LOG_PATH = "proxy_errors.log"
                 try:
                     with open(ERROR_LOG_PATH, "a", encoding="utf-8") as f:
                         f.write(
