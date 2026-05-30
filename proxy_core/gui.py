@@ -276,16 +276,27 @@ class ProxyGUI(ctk.CTk):
         self.right_manager_frame = ctk.CTkFrame(self.tab_manager, corner_radius=8)
         self.right_manager_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
         self.right_manager_frame.grid_columnconfigure(0, weight=1)
-        self.right_manager_frame.grid_rowconfigure(1, weight=1)
+        self.right_manager_frame.grid_rowconfigure(2, weight=1)
 
         ctk.CTkLabel(
             self.right_manager_frame,
             text="Active Rotation Configuration",
             font=ctk.CTkFont(size=14, weight="bold"),
-        ).grid(row=0, column=0, pady=(10, 5))
+        ).grid(row=0, column=0, pady=(10, 2))
+
+        # Dropdown to select active domain rotation
+        self.domain_select = ctk.CTkOptionMenu(
+            self.right_manager_frame,
+            values=[
+                "Thinking Models (gemini-3.5-flash)",
+                "Quick Models (gemini-flash-lite-latest)",
+            ],
+            command=self.on_manager_domain_change,
+        )
+        self.domain_select.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
 
         self.rotation_scroll = ctk.CTkScrollableFrame(self.right_manager_frame)
-        self.rotation_scroll.grid(row=1, column=0, padx=10, pady=5, sticky="nsew")
+        self.rotation_scroll.grid(row=2, column=0, padx=10, pady=5, sticky="nsew")
         self.rotation_scroll.grid_columnconfigure(0, weight=1)
 
         self.save_rotation_btn = ctk.CTkButton(
@@ -295,9 +306,10 @@ class ProxyGUI(ctk.CTk):
             hover_color="#3498DB",
             command=self.on_save_active_rotation,
         )
-        self.save_rotation_btn.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
+        self.save_rotation_btn.grid(row=3, column=0, padx=10, pady=10, sticky="ew")
 
         # Load active rotation models on start
+        self.active_domain_key = "gemini-3.5-flash"
         self.active_rotation_list = []
         self.load_active_rotation_from_disk()
 
@@ -604,33 +616,60 @@ class ProxyGUI(ctk.CTk):
                             0, lambda: badge_widget.configure(text_color="#E67E22")
                         )  # Orange (429)
                     else:
+                        logger.error(f"[GUI] Model test returned status: {status}")
+                        log_queue.put(
+                            f"[GUI] [WARNING] Model {model_id} test status: {status}"
+                        )
                         self.after(
                             0, lambda: badge_widget.configure(text_color="#E74C3C")
                         )  # Red (404/Error)
                 else:
+                    logger.error(f"[GUI] Model test HTTP error: {r.status_code}")
+                    log_queue.put(
+                        f"[GUI] [WARNING] Model {model_id} HTTP error: {r.status_code}"
+                    )
                     self.after(0, lambda: badge_widget.configure(text_color="#E74C3C"))
-            except Exception:
+            except Exception as e:
+                import traceback
+
+                tb = traceback.format_exc()
+                logger.error(f"[GUI] Model test exception: {e}\n{tb}")
+                log_queue.put(f"[GUI] [ERROR] Model test exception for {model_id}: {e}")
                 self.after(0, lambda: badge_widget.configure(text_color="#E74C3C"))
 
         threading.Thread(target=do_test, daemon=True).start()
 
+    def on_manager_domain_change(self, val):
+        """Handle active domain choice change from the selector menu."""
+        if "Thinking Models" in val:
+            self.active_domain_key = "gemini-3.5-flash"
+        else:
+            self.active_domain_key = "gemini-flash-lite-latest"
+        self.load_active_rotation_from_disk()
+        logger.info(
+            f"[GUI] Switched manager domain selection to: {self.active_domain_key}"
+        )
+        log_queue.put(
+            f"[GUI] Switched manager domain selection to: {self.active_domain_key}"
+        )
+
     def on_add_model_to_rotation(self, model_id):
-        """Add a model from scan to the end of the local in-memory rotation list."""
+        """Add a model from scan to the end of the active domain's rotation list."""
         if model_id not in self.active_rotation_list:
             self.active_rotation_list.append(model_id)
             self.render_rotation_list()
             logger.info(
-                f"[GUI] Added model '{model_id}' to current rotation configuration."
+                f"[GUI] Added model '{model_id}' to current {self.active_domain_key} rotation configuration."
             )
             log_queue.put(
-                f"[GUI] Added model '{model_id}' to current rotation configuration."
+                f"[GUI] Added model '{model_id}' to current {self.active_domain_key} rotation configuration."
             )
 
     def load_active_rotation_from_disk(self):
-        """Load and display the active rotation list from config."""
+        """Load and display the active rotation list from config based on active domain."""
         config = load_rotation_config()
         self.active_rotation_list = config.get("rotation_lists", {}).get(
-            "gemini-3.5-flash", []
+            self.active_domain_key, []
         )
         self.render_rotation_list()
 
@@ -639,6 +678,7 @@ class ProxyGUI(ctk.CTk):
         for widget in self.rotation_scroll.winfo_children():
             widget.destroy()
 
+        protected_id = self.active_domain_key
         for idx, model_id in enumerate(self.active_rotation_list):
             row_frame = ctk.CTkFrame(self.rotation_scroll, fg_color="transparent")
             row_frame.grid(row=idx, column=0, padx=2, pady=2, sticky="ew")
@@ -649,8 +689,8 @@ class ProxyGUI(ctk.CTk):
             )
             lbl.grid(row=0, column=0, padx=5, pady=2, sticky="w")
 
-            # Check core boundaries (don't allow removing gemini-3.5-flash)
-            if model_id != "gemini-3.5-flash":
+            # Check core boundaries (don't allow removing protected first element)
+            if model_id != protected_id:
                 # Up button
                 up_cb = lambda i=idx: self.on_shift_model_priority(i, direction=-1)
                 btn_up = ctk.CTkButton(
@@ -693,9 +733,10 @@ class ProxyGUI(ctk.CTk):
     def on_shift_model_priority(self, index, direction):
         """Shift model priority up (-1) or down (+1) in the rotation list."""
         new_index = index + direction
+        protected_id = self.active_domain_key
         if 0 <= new_index < len(self.active_rotation_list):
-            # Maintain gemini-3.5-flash boundary at index 0
-            if self.active_rotation_list[0] == "gemini-3.5-flash" and (
+            # Maintain boundary at index 0
+            if self.active_rotation_list[0] == protected_id and (
                 index == 0 or new_index == 0
             ):
                 return
@@ -709,7 +750,8 @@ class ProxyGUI(ctk.CTk):
 
     def on_remove_model_from_rotation(self, model_id):
         """Remove a model from the local in-memory rotation list."""
-        if model_id != "gemini-3.5-flash" and model_id in self.active_rotation_list:
+        protected_id = self.active_domain_key
+        if model_id != protected_id and model_id in self.active_rotation_list:
             self.active_rotation_list.remove(model_id)
             self.render_rotation_list()
 
@@ -719,14 +761,16 @@ class ProxyGUI(ctk.CTk):
             config = load_rotation_config()
             if "rotation_lists" not in config:
                 config["rotation_lists"] = {}
-            config["rotation_lists"]["gemini-3.5-flash"] = list(
+            config["rotation_lists"][self.active_domain_key] = list(
                 self.active_rotation_list
             )
             save_rotation_config(config)
             logger.info(
-                "[GUI] Successfully saved active rotation configuration on disk!"
+                f"[GUI] Successfully saved active {self.active_domain_key} rotation configuration on disk!"
             )
-            log_queue.put("[GUI] Successfully saved active rotation configuration!")
+            log_queue.put(
+                f"[GUI] Successfully saved active {self.active_domain_key} rotation configuration!"
+            )
         except Exception as e:
             logger.error(f"[GUI] Failed to save rotation config: {e}")
             log_queue.put(f"[GUI] [ERROR] Failed to save rotation config: {e}")
