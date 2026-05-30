@@ -209,8 +209,20 @@ class ProxyGUI(ctk.CTk):
         self.right_panel.grid_columnconfigure(0, weight=1)
         self.right_panel.grid_rowconfigure(0, weight=1)
 
+        # Tabview for separation
+        self.tabview = ctk.CTkTabview(self.right_panel)
+        self.tabview.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+
+        self.tabview.add("Console Logs")
+        self.tabview.add("Model Manager")
+
+        # Tab 1: Console Logs
+        self.tab_logs = self.tabview.tab("Console Logs")
+        self.tab_logs.grid_columnconfigure(0, weight=1)
+        self.tab_logs.grid_rowconfigure(0, weight=1)
+
         self.log_textbox = ctk.CTkTextbox(
-            self.right_panel,
+            self.tab_logs,
             font=ctk.CTkFont(family="Consolas", size=11),
             fg_color="#1E1E1E",
             text_color="#F8F8F2",
@@ -224,9 +236,15 @@ class ProxyGUI(ctk.CTk):
         self.log_textbox.tag_config("debug", foreground="#7F8C8D")  # Asbestos grey
 
         self.clear_btn = ctk.CTkButton(
-            self.right_panel, text="Clear Logs", command=self.on_clear_logs, width=120
+            self.tab_logs, text="Clear Logs", command=self.on_clear_logs, width=120
         )
         self.clear_btn.grid(row=1, column=0, pady=10)
+
+        # Tab 2: Model Manager (Placeholder structure for next task)
+        self.tab_manager = self.tabview.tab("Model Manager")
+        self.tab_manager.grid_columnconfigure(0, weight=1)
+        self.tab_manager.grid_columnconfigure(1, weight=1)
+        self.tab_manager.grid_rowconfigure(0, weight=1)
 
         self.start_server_subprocess()
         self.poll_queue()
