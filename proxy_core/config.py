@@ -54,11 +54,11 @@ def load_rotation_config() -> dict:
     target_gemini_35_list = [
         "gemini-3.5-flash",
         "gemini-3-flash",
+        "openrouter/owl-alpha",
         "deepseek/deepseek-v4-flash:free",
-        "deepseek/deepseek-r1:free",
-        "qwen/qwen-2.5-72b-instruct:free",
         "meta-llama/llama-3.3-70b-instruct:free",
-        "deepseek/deepseek-chat:free",
+        "qwen/qwen3-coder:free",
+        "moonshotai/kimi-k2.6:free",
     ]
     target_lite_list = [
         "gemini-flash-lite-latest",

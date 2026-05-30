@@ -107,9 +107,9 @@ class ProxyGUI(ctk.CTk):
             "openrouter/owl-alpha",
             "deepseek/deepseek-v4-flash:free",
             "deepseek/deepseek-r1:free",
-            "qwen/qwen-2.5-72b-instruct:free",
             "meta-llama/llama-3.3-70b-instruct:free",
-            "deepseek/deepseek-chat:free",
+            "qwen/qwen3-coder:free",
+            "moonshotai/kimi-k2.6:free",
         ]
         self.thinking_select = ctk.CTkOptionMenu(
             self.left_panel, values=thinking_models, command=self.on_thinking_select

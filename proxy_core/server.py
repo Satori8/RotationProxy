@@ -127,11 +127,23 @@ MODEL_SETTINGS = {
         "keys_pool": OPENROUTER_KEYS,
         "target_model": "deepseek/deepseek-r1:free",
     },
-    "qwen/qwen-2.5-72b-instruct:free": {
+    "meta-llama/llama-3.3-70b-instruct:free": {
         "provider": "openrouter",
         "base_url": "https://openrouter.ai/api/v1",
         "keys_pool": OPENROUTER_KEYS,
-        "target_model": "qwen/qwen-2.5-72b-instruct:free",
+        "target_model": "meta-llama/llama-3.3-70b-instruct:free",
+    },
+    "qwen/qwen3-coder:free": {
+        "provider": "openrouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "keys_pool": OPENROUTER_KEYS,
+        "target_model": "qwen/qwen3-coder:free",
+    },
+    "moonshotai/kimi-k2.6:free": {
+        "provider": "openrouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "keys_pool": OPENROUTER_KEYS,
+        "target_model": "moonshotai/kimi-k2.6:free",
     },
 }
 
