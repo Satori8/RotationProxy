@@ -272,6 +272,35 @@ class ProxyGUI(ctk.CTk):
 
         self.loaded_models_data = []  # List to track rendered widgets
 
+        # Right Side of Manager: Active Rotation Configuration
+        self.right_manager_frame = ctk.CTkFrame(self.tab_manager, corner_radius=8)
+        self.right_manager_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
+        self.right_manager_frame.grid_columnconfigure(0, weight=1)
+        self.right_manager_frame.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            self.right_manager_frame,
+            text="Active Rotation Configuration",
+            font=ctk.CTkFont(size=14, weight="bold"),
+        ).grid(row=0, column=0, pady=(10, 5))
+
+        self.rotation_scroll = ctk.CTkScrollableFrame(self.right_manager_frame)
+        self.rotation_scroll.grid(row=1, column=0, padx=10, pady=5, sticky="nsew")
+        self.rotation_scroll.grid_columnconfigure(0, weight=1)
+
+        self.save_rotation_btn = ctk.CTkButton(
+            self.right_manager_frame,
+            text="Save Rotation Config",
+            fg_color="#2980B9",
+            hover_color="#3498DB",
+            command=self.on_save_active_rotation,
+        )
+        self.save_rotation_btn.grid(row=2, column=0, padx=10, pady=10, fill="x")
+
+        # Load active rotation models on start
+        self.active_rotation_list = []
+        self.load_active_rotation_from_disk()
+
         self.start_server_subprocess()
         self.poll_queue()
         self.check_subprocess_health()
@@ -586,5 +615,118 @@ class ProxyGUI(ctk.CTk):
         threading.Thread(target=do_test, daemon=True).start()
 
     def on_add_model_to_rotation(self, model_id):
-        # Stub for the next task
-        pass
+        """Add a model from scan to the end of the local in-memory rotation list."""
+        if model_id not in self.active_rotation_list:
+            self.active_rotation_list.append(model_id)
+            self.render_rotation_list()
+            logger.info(
+                f"[GUI] Added model '{model_id}' to current rotation configuration."
+            )
+            log_queue.put(
+                f"[GUI] Added model '{model_id}' to current rotation configuration."
+            )
+
+    def load_active_rotation_from_disk(self):
+        """Load and display the active rotation list from config."""
+        config = load_rotation_config()
+        self.active_rotation_list = config.get("rotation_lists", {}).get(
+            "gemini-3.5-flash", []
+        )
+        self.render_rotation_list()
+
+    def render_rotation_list(self):
+        """Render the ordered rotation models in the configurator frame."""
+        for widget in self.rotation_scroll.winfo_children():
+            widget.destroy()
+
+        for idx, model_id in enumerate(self.active_rotation_list):
+            row_frame = ctk.CTkFrame(self.rotation_scroll, fg_color="transparent")
+            row_frame.grid(row=idx, column=0, padx=2, pady=2, sticky="ew")
+            row_frame.grid_columnconfigure(0, weight=1)
+
+            lbl = ctk.CTkLabel(
+                row_frame, text=model_id, font=ctk.CTkFont(size=10, weight="bold")
+            )
+            lbl.grid(row=0, column=0, padx=5, pady=2, sticky="w")
+
+            # Check core boundaries (don't allow removing gemini-3.5-flash)
+            if model_id != "gemini-3.5-flash":
+                # Up button
+                up_cb = lambda i=idx: self.on_shift_model_priority(i, direction=-1)
+                btn_up = ctk.CTkButton(
+                    row_frame,
+                    text="▲",
+                    width=22,
+                    height=18,
+                    font=ctk.CTkFont(size=8),
+                    command=up_cb,
+                )
+                btn_up.grid(row=0, column=1, padx=1)
+
+                # Down button
+                down_cb = lambda i=idx: self.on_shift_model_priority(i, direction=1)
+                btn_down = ctk.CTkButton(
+                    row_frame,
+                    text="▼",
+                    width=22,
+                    height=18,
+                    font=ctk.CTkFont(size=8),
+                    command=down_cb,
+                )
+                btn_down.grid(row=0, column=2, padx=1)
+
+                # Remove button
+                del_cb = lambda m=model_id: self.on_remove_model_from_rotation(m)
+                btn_del = ctk.CTkButton(
+                    row_frame,
+                    text="✕",
+                    width=22,
+                    height=18,
+                    text_color="#E74C3C",
+                    font=ctk.CTkFont(size=8),
+                    fg_color="transparent",
+                    hover_color="#2c2c2c",
+                    command=del_cb,
+                )
+                btn_del.grid(row=0, column=3, padx=1)
+
+    def on_shift_model_priority(self, index, direction):
+        """Shift model priority up (-1) or down (+1) in the rotation list."""
+        new_index = index + direction
+        if 0 <= new_index < len(self.active_rotation_list):
+            # Maintain gemini-3.5-flash boundary at index 0
+            if self.active_rotation_list[0] == "gemini-3.5-flash" and (
+                index == 0 or new_index == 0
+            ):
+                return
+
+            # Swap items
+            self.active_rotation_list[index], self.active_rotation_list[new_index] = (
+                self.active_rotation_list[new_index],
+                self.active_rotation_list[index],
+            )
+            self.render_rotation_list()
+
+    def on_remove_model_from_rotation(self, model_id):
+        """Remove a model from the local in-memory rotation list."""
+        if model_id != "gemini-3.5-flash" and model_id in self.active_rotation_list:
+            self.active_rotation_list.remove(model_id)
+            self.render_rotation_list()
+
+    def on_save_active_rotation(self):
+        """Save the configured rotation lists to config_rotation.json."""
+        try:
+            config = load_rotation_config()
+            if "rotation_lists" not in config:
+                config["rotation_lists"] = {}
+            config["rotation_lists"]["gemini-3.5-flash"] = list(
+                self.active_rotation_list
+            )
+            save_rotation_config(config)
+            logger.info(
+                "[GUI] Successfully saved active rotation configuration on disk!"
+            )
+            log_queue.put("[GUI] Successfully saved active rotation configuration!")
+        except Exception as e:
+            logger.error(f"[GUI] Failed to save rotation config: {e}")
+            log_queue.put(f"[GUI] [ERROR] Failed to save rotation config: {e}")
