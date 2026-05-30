@@ -43,6 +43,7 @@ error_keys_log.json
 # Logs
 *.log
 proxy_errors.log
+chat_logs/
 
 # IDE / Editors
 .vscode/

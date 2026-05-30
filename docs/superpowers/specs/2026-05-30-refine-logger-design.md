@@ -1,103 +1,98 @@
-# Design Specification: Refine Logger, Subprocess Management, and Rotation Cooldowns
+# Design Specification: Refine Logger, Subprocess Management, and Modular Split
 
 **Date:** 2026-05-30
 **Status:** Approved
 
 ## 1. Overview
-This specification details changes to `proxy3.py` to refine the logging output format, suppress verbose default log messages, introduce a cooldown reset control in the GUI, optimize daily rate limit threshold logic, fix the non-deterministic non-429 error logger bug, and guarantee robust shutdown of the server subprocess on Windows.
+This specification details the architecture and requirements for refactoring `proxy3.py` (originally 1700+ lines) into a highly modular, maintainable, and clean Python package (`proxy_core`). At the same time, it integrates deep improvements to the logging system (colored output, silenced third-party logs, custom single-line request tracking), optimizes cooldown states (adding a reset button in the GUI and a control endpoint in the API), resolves multiple bugs (JSON encoding, error counter, Windows subprocess port leakages), and preserves maximum performance.
 
-## 2. Requirements
+The main entry point will remain `proxy3.py` in the repository root. All application logic will reside in the subpackage `proxy_core`.
 
-### 2.1 Single-Line Log Formatting & Suppressing Default Logs
-* Replace default verbose `httpx` and `uvicorn.access` log messages with a single, highly readable log entry for every proxy request:
+---
+
+## 2. Architecture & Directory Layout
+
+To keep the root folder clean, all modules are organized inside the `proxy_core` subdirectory.
+
+```
+├── proxy3.py                # Main entry point (CLI argument parser, boots GUI or Foreground Server)
+└── proxy_core/              # Modular proxy library package
+    ├── __init__.py          # Package initialization
+    ├── logger.py            # Custom ColoredFormatter, log configuration, and third-party silencer
+    ├── config.py            # Disk configuration (config_rotation.json) & global settings (USE_KAGGLE, etc.)
+    ├── state.py             # Global in-memory runtime states (COOLDOWNS, CONSECUTIVE_RPD_429S, etc.)
+    ├── rotation.py          # Key loading, key sorting, daily limit checks, error logging
+    ├── server.py            # FastAPI App, transparent proxy routing, payload translation, reset route
+    └── gui.py               # CustomTkinter GUI layout, log polling, robust Windows subprocess closing
+```
+
+---
+
+## 3. Detailed Module Specifications
+
+### 3.1 `proxy_core/logger.py` (Logging Setup)
+* **ColoredFormatter:** Defines an ANSI color log formatter that highlights different severity levels:
+  * `DEBUG` -> Grey (`\x1b[90m`)
+  * `INFO` -> Green (`\x1b[32m`)
+  * `WARNING` -> Yellow (`\x1b[33m`)
+  * `ERROR` -> Red (`\x1b[31m`)
+  * `CRITICAL` -> Bold Red (`\x1b[31;1m`)
+  * Applies `ColoredFormatter` to all console `StreamHandler` instances.
+* **Third-Party Suppression:** Configures `httpx`, `httpcore`, and `uvicorn.access` loggers to level `WARNING` to eliminate automatic, noisy HTTP request/response line logging.
+
+### 3.2 `proxy_core/config.py` (Configuration Manager)
+* Manages loading/saving of `config_rotation.json`.
+* Defines global settings which can be modified dynamically:
+  * `USE_KAGGLE` (Boolean)
+  * `SAVE_CHAT_LOGS` (Boolean)
+  * `FORCE_MODEL` (Dict of forced models)
+  * `KAGGLE_BASE_URL` (String)
+
+### 3.3 `proxy_core/state.py` (Runtime Mutable State)
+* Defines global, thread-safe in-memory collections:
+  * `COOLDOWNS = {}` (Key cooldowns)
+  * `CONSECUTIVE_429S = {}` (Consecutive 429s per provider)
+  * `LAST_429_TIME = {}` (Last 429 timestamp per key)
+  * `CONSECUTIVE_RPD_429S = {}` (Requests Per Day failure history per key)
+  * `LAST_USED = {}` (Last used timestamp per key)
+  * `LAST_REQUEST_TIME = {}` (Last request timestamp per provider)
+
+### 3.4 `proxy_core/rotation.py` (Key Pool & Cooldown Management)
+* **Key Loading:** Loads API keys from `.md` files dynamically.
+* **Error Log Handling:**
+  * Uses `hashlib.md5(error_msg.encode('utf-8')).hexdigest()` to uniquely and deterministically group errors. This fixes the previous python `hash()` process-randomization bug (where 403 error files grew indefinitely because hashes changed on every start).
+  * Implements robust file checks (`os.path.getsize` and catching `JSONDecodeError`) to prevent crashes when `error_keys_log.json` is empty or corrupted.
+
+### 3.5 `proxy_core/server.py` (FastAPI Server)
+* Implements the core proxy endpoints, request payload translations, and response stream generator.
+* **Single-Line Completion Logs:** Outputs exactly one structured log line per completed request:
   `[TIMESTAMP] [LEVEL] [model] [key#suffix] [status_code]`
   * *Example:* `[2026-05-30 16:35:48,358] [INFO] [gemini-3.5-flash] [key#3-abcd] [200]`
-* Suppress automatic INFO-level logs from `httpx`, `httpcore`, and `uvicorn.access`.
+* **Short Cooldown Logs:** All warning/sleep messages are compressed to minimize clutter:
+  * `[gemini] Key #3 429 (gemini-3.5-flash). Cooldown 90.0s. Attempt 1/5`
+  * `[gemini] Sleeping 1.50s...`
+  * `[gemini] Key #3 RPD limit. Wait 12.3h`
+* **Control API:** Exposes a `POST /control/reset_cooldowns` endpoint to clear all runtime states in `state.py` and resets config list cooldowns in `config_rotation.json`.
+* **Fail Sequence and Thresholds:**
+  * Increases daily RPD threshold to `3` consecutive failures before marking daily cooldown.
+  * Resets `CONSECUTIVE_RPD_429S[api_key] = 0` instantly when a request succeeds (status `200`).
 
-### 2.2 Shortened Cooldown and Sleep Messages
-* Format sleep and retry messages to be extremely concise:
-  * Cooldown warning: `[gemini] Key #3 429 (gemini-3.5-flash). Cooldown 90.0s. Attempt 1/5`
-  * Sleep info: `[gemini] Sleeping 1.50s...`
-  * Daily RPD limit: `[gemini] Key #3 RPD limit. Wait 12.3h`
-  * Daily non-Gemini limit: `[gemini] Key #3 daily limit. Wait 24h`
-  * Model failure: `Model 'gemini-3.5-flash' failed. Cooldown 24h`
+### 3.6 `proxy_core/gui.py` (CustomTkinter Controller)
+* Renders the control application.
+* **Reset Button:** Adds a dark red/firebrick "Reset Daily Cooldowns" button that calls `/control/reset_cooldowns` asynchronously using `httpx`.
+* **ANSI Stripping:** Strips ANSI escape codes from incoming subprocess lines in `poll_queue` to keep the GUI textbox clean and readable.
+* **Robust Subprocess Closing:** On Windows, it terminates the server subprocess using `taskkill /F /T` to fully clean up bound ports and prevent orphaned uvicorn instances.
 
-### 2.3 CustomTkinter GUI Integration & Cooldown Reset
-* Add a **"Reset Daily Cooldowns"** button (styled in dark red/firebrick) to the GUI's left control panel.
-* Clicking this button will send a non-blocking `POST` request to the proxy server's control endpoint.
-* Expose a `/control/reset_cooldowns` POST endpoint on the FastAPI app (registered before the wildcard route) to:
-  * Clear global in-memory cooldown dicts (`COOLDOWNS`, `CONSECUTIVE_429S`, `CONSECUTIVE_RPD_429S`).
-  * Reset `model_cooldowns` and `consecutive_model_failures` in `config_rotation.json`.
-* Strip ANSI escape codes dynamically in `ProxyGUI.poll_queue` to ensure no garbage color codes render in the GUI text box.
+### 3.7 `proxy3.py` (Main Entry Point)
+* Command-line argument parser. If `--gui` is passed, boots `gui.py`. Else, starts foreground `uvicorn.run("proxy_core.server:app")`.
 
-### 2.4 Rotation Cooldown & Error Log Bug Fixes
-* **Increase RPD daily threshold:** Raise the limit of consecutive failures before hitting the daily RPD limit to `3` (from `2`).
-* **Success key sequence reset:** Reset `CONSECUTIVE_RPD_429S[api_key] = 0` upon any successful request (status `200`) using that key.
-* **Non-deterministic 403 logging fix:** Replace the built-in non-deterministic `hash(error_msg)` with `hashlib.md5(error_msg.encode('utf-8')).hexdigest()`, preventing duplicate errors from being appended across process restarts.
-* **Corrupt error log protection:** Add robust handling for empty or invalid `error_keys_log.json` files in `log_non_429_error` and `remove_key_from_error_log`.
+---
 
-### 2.5 Robust Windows Subprocess Termination
-* On Windows, uvicorn subprocesses can sometimes survive parent termination if started under standard options. We will:
-  * Force-kill the process tree if needed.
-  * Register a `win32` graceful termination sequence or use taskkill on Windows specifically to guarantee complete cleanup of the port binding.
-
-## 3. Architecture & Implementation Plan
-
-### 3.1 Logging Configurations
-A new `ColoredFormatter` will inherit from `logging.Formatter` to color-code console output based on severity:
-```python
-class ColoredFormatter(logging.Formatter):
-    GREY = "\x1b[90m"
-    GREEN = "\x1b[32m"
-    YELLOW = "\x1b[33m"
-    RED = "\x1b[31m"
-    BOLD_RED = "\x1b[31;1m"
-    RESET = "\x1b[0m"
-
-    COLORS = {
-        logging.DEBUG: GREY,
-        logging.INFO: GREEN,
-        logging.WARNING: YELLOW,
-        logging.ERROR: RED,
-        logging.CRITICAL: BOLD_RED,
-    }
-
-    def format(self, record):
-        import copy
-        rec = copy.copy(record)
-        color = self.COLORS.get(rec.levelno, self.RESET)
-        rec.levelname = f"{color}{rec.levelname}{self.RESET}"
-        rec.msg = f"{color}{rec.msg}{self.RESET}"
-        return super().format(rec)
-```
-
-We will strip ANSI codes in the GUI:
-```python
-import re
-ANSI_ESCAPE = re.compile(r'\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-```
-
-### 3.2 Robust Subprocess Closing
-Update `stop_server_subprocess`:
-```python
-    def stop_server_subprocess(self):
-        if self.server_process is not None:
-            try:
-                # Under Windows, terminate the whole process tree to prevent orphaned ports
-                if os.name == "nt":
-                    import subprocess
-                    subprocess.run(
-                        ["taskkill", "/F", "/T", "/PID", str(self.server_process.pid)],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                else:
-                    self.server_process.terminate()
-                    self.server_process.wait(timeout=2.0)
-            except Exception:
-                try:
-                    self.server_process.kill()
-                except Exception:
-                    pass
-            self.server_process = None
-```
+## 4. Migration & Verification Plan
+1. Move the code out of `proxy3.py` into individual modules inside `proxy_core/`.
+2. Re-wire `proxy3.py` to act as the simple entry point wrapper.
+3. Validate that standard uvicorn-access and httpx logging are silenced.
+4. Verify colored console logging.
+5. Validate that ANSI codes are stripped in the GUI.
+6. Verify "Reset Daily Cooldowns" correctly resets in-memory and on-disk cooldown records.
+7. Test robust process termination on Windows by closing the GUI.
