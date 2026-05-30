@@ -887,54 +887,72 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         try:
 
                             async def iter_bytes():
-                                async for chunk in response.aiter_bytes():
-                                    yield chunk
+                                try:
+                                    async for chunk in response.aiter_bytes():
+                                        yield chunk
+                                except (httpx.ReadError, httpx.HTTPError) as he:
+                                    logger.warning(
+                                        f"[{candidate_model}] Upstream stream read error (client disconnect or timeout): {he}"
+                                    )
+                                except Exception as se:
+                                    logger.debug(
+                                        f"[{candidate_model}] Stream exception: {se}"
+                                    )
 
-                            async for chunk in iter_bytes():
-                                chunk_str = ""
-                                if SAVE_CHAT_LOGS or needs_gemini_response_translation:
-                                    try:
-                                        chunk_str = chunk.decode(
-                                            "utf-8", errors="ignore"
-                                        )
-                                    except Exception:
-                                        pass
+                            async def iter_translated_chunks():
+                                async for chunk in iter_bytes():
+                                    chunk_str = ""
+                                    if (
+                                        SAVE_CHAT_LOGS
+                                        or needs_gemini_response_translation
+                                    ):
+                                        try:
+                                            chunk_str = chunk.decode(
+                                                "utf-8", errors="ignore"
+                                            )
+                                        except Exception:
+                                            pass
 
-                                if SAVE_CHAT_LOGS and chunk_str:
-                                    try:
-                                        text_part = extract_text_from_chunk(
-                                            chunk_str, provider_name
-                                        )
-                                        if text_part:
-                                            response_text_buffer.append(text_part)
-                                    except Exception as ce:
-                                        logger.debug(
-                                            f"Error extracting text from chunk: {ce}"
-                                        )
+                                    if SAVE_CHAT_LOGS and chunk_str:
+                                        try:
+                                            text_part = extract_text_from_chunk(
+                                                chunk_str, provider_name
+                                            )
+                                            if text_part:
+                                                response_text_buffer.append(text_part)
+                                        except Exception as ce:
+                                            logger.debug(
+                                                f"Error extracting text from chunk: {ce}"
+                                            )
 
-                                if needs_gemini_response_translation and chunk_str:
-                                    try:
-                                        translated_lines = []
-                                        for line in chunk_str.split("\n"):
-                                            line_stripped = line.strip()
-                                            if line_stripped:
-                                                translated_line = (
-                                                    translate_openai_chunk_to_gemini(
+                                    if needs_gemini_response_translation and chunk_str:
+                                        try:
+                                            translated_lines = []
+                                            for line in chunk_str.split("\n"):
+                                                line_stripped = line.strip()
+                                                if line_stripped:
+                                                    translated_line = translate_openai_chunk_to_gemini(
                                                         line_stripped
                                                     )
-                                                )
-                                                translated_lines.append(translated_line)
-                                            else:
-                                                translated_lines.append(line)
-                                        translated_chunk = "\n".join(translated_lines)
-                                        yield translated_chunk.encode("utf-8")
-                                    except Exception as te:
-                                        logger.debug(
-                                            f"Failed to translate response chunk: {te}"
-                                        )
+                                                    translated_lines.append(
+                                                        translated_line
+                                                    )
+                                                else:
+                                                    translated_lines.append(line)
+                                            translated_chunk = "\n".join(
+                                                translated_lines
+                                            )
+                                            yield translated_chunk.encode("utf-8")
+                                        except Exception as te:
+                                            logger.debug(
+                                                f"Failed to translate response chunk: {te}"
+                                            )
+                                            yield chunk
+                                    else:
                                         yield chunk
-                                else:
-                                    yield chunk
+
+                            async for trans_chunk in iter_translated_chunks():
+                                yield trans_chunk
                         finally:
                             await response.aclose()
                             if SAVE_CHAT_LOGS and (
