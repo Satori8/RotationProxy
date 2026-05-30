@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import httpx
 
 from proxy_core import logger as core_logger
@@ -389,6 +390,77 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class TestModelRequest(BaseModel):
+    model: str
+    provider: str
+
+
+@app.post("/control/test_model")
+async def test_model_endpoint(req: TestModelRequest, request: Request):
+    """Securely test a model via the proxy in the background to check for 200, 429, or 404."""
+    model_id = req.model
+    provider_name = req.provider
+
+    # Resolve keys pool and base URL
+    if provider_name == "openrouter":
+        base_url = "https://openrouter.ai/api/v1"
+        keys_pool = OPENROUTER_KEYS
+    elif provider_name == "mistral":
+        base_url = "https://api.mistral.ai/v1"
+        keys_pool = MISTRAL_KEYS
+    elif provider_name == "llm7":
+        base_url = "https://api.llm7.io/v1"
+        keys_pool = LLM7_KEYS
+    else:
+        base_url = "https://generativelanguage.googleapis.com"
+        keys_pool = API_KEYS
+
+    if not keys_pool:
+        return {
+            "status": "error",
+            "message": f"No keys configured for provider '{provider_name}'.",
+        }
+
+    # Pick the first available key
+    api_key = keys_pool[0]
+    headers = {"Content-Type": "application/json"}
+    if provider_name in ("openrouter", "mistral", "llm7"):
+        headers["authorization"] = f"Bearer {api_key}"
+    else:
+        headers["x-goog-api-key"] = api_key
+
+    # Build payload
+    test_body = {"model": model_id, "messages": [{"role": "user", "content": "Hi"}]}
+
+    url = f"{base_url}/chat/completions"
+    client = request.app.state.client
+
+    try:
+        req_out = client.build_request(
+            method="POST",
+            url=url,
+            headers=headers,
+            content=json.dumps(test_body).encode("utf-8"),
+        )
+        resp = await client.send(req_out, timeout=10.0)
+        status_code = resp.status_code
+        await resp.aclose()
+
+        if status_code == 200:
+            return {"status": "ok", "message": "Model responded successfully!"}
+        elif status_code == 429:
+            return {"status": "rate_limited", "message": "Rate limit exceeded (429)"}
+        elif status_code == 404:
+            return {"status": "not_found", "message": "Model not found (404)"}
+        else:
+            return {
+                "status": "error",
+                "message": f"Server returned status {status_code}",
+            }
+    except Exception as e:
+        return {"status": "error", "message": f"Network/Connection error: {e}"}
 
 
 @app.post("/control/reset_cooldowns")
