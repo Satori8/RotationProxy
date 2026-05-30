@@ -46,7 +46,7 @@ import os
 logger = logging.getLogger("proxy")
 
 # Dynamically add vpn_manager directory to path
-vpn_dir = r"D:\Work\Active\server-services\vpn_switcher\configs"
+vpn_dir = r"D:\Work\Active\server-services\vpn_switcher"
 if vpn_dir not in sys.path:
     sys.path.insert(0, vpn_dir)
 

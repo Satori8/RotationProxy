@@ -60,7 +60,7 @@ class ProxyGUI(ctk.CTk):
 
         import sys
 
-        vpn_dir = r"D:\Work\Active\server-services\vpn_switcher\configs"
+        vpn_dir = r"D:\Work\Active\server-services\vpn_switcher"
         if vpn_dir not in sys.path:
             sys.path.insert(0, vpn_dir)
         try:
