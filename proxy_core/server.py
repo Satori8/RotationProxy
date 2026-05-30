@@ -294,6 +294,39 @@ def translate_payload_to_openai(gemini_payload: dict, target_model: str) -> dict
     return openai_payload
 
 
+def translate_openai_chunk_to_gemini(openai_chunk_str: str) -> str:
+    """Translate an OpenAI SSE chunk to a Gemini SSE chunk."""
+    if openai_chunk_str.startswith("data:"):
+        data_content = openai_chunk_str[5:].strip()
+        if data_content == "[DONE]":
+            return "data: [DONE]"
+        try:
+            openai_data = json.loads(data_content)
+            choices = openai_data.get("choices", [])
+            if choices:
+                delta = choices[0].get("delta", {})
+                content = delta.get("content", "")
+                finish_reason = choices[0].get("finish_reason", "STOP")
+                if finish_reason:
+                    finish_reason = finish_reason.upper()
+                else:
+                    finish_reason = "STOP"
+
+                gemini_data = {
+                    "candidates": [
+                        {
+                            "content": {"parts": [{"text": content}], "role": "model"},
+                            "finishReason": finish_reason,
+                            "index": 0,
+                        }
+                    ]
+                }
+                return f"data: {json.dumps(gemini_data)}"
+        except Exception:
+            pass
+    return openai_chunk_str
+
+
 def mark_cooldown(key: str, duration: float = 60.0) -> None:
     COOLDOWNS[key] = time.time() + duration
 
@@ -512,6 +545,9 @@ async def _transparent_proxy_attempt(request: Request, path: str):
         keys_pool = model_settings["keys_pool"]
         target_model_id = model_settings["target_model"]
 
+        is_gemini_client = "generateContent" in path or "models/" in path
+        needs_gemini_response_translation = False
+
         if provider_name == "gemini":
             target_path = path
             if "gemini-3.5-flash" in path and candidate_model != "gemini-3.5-flash":
@@ -527,20 +563,30 @@ async def _transparent_proxy_attempt(request: Request, path: str):
             ):
                 target_path = path.replace("gemini-2.0-flash-lite", target_model_id)
         else:
-            if path.startswith("openrouter/"):
-                target_path = path[11:]
-            elif path.startswith("mistral/"):
-                target_path = path[8:]
-            elif path.startswith("llm7/"):
-                target_path = path[5:]
+            if is_gemini_client:
+                target_path = "chat/completions"
+                needs_gemini_response_translation = True
             else:
-                target_path = path
+                if path.startswith("openrouter/"):
+                    target_path = path[11:]
+                elif path.startswith("mistral/"):
+                    target_path = path[8:]
+                elif path.startswith("llm7/"):
+                    target_path = path[5:]
+                else:
+                    target_path = path
 
-            # Strip duplicate 'v1/' prefix if the base URL ends with 'v1'
-            if target_path.startswith("v1/") and (
-                target_base_url.endswith("/v1") or target_base_url.endswith("/v1/")
-            ):
-                target_path = target_path[3:]
+                # Strip v1beta/ or v1/ prefix if present
+                if target_path.startswith("v1beta/"):
+                    target_path = target_path[7:]
+                elif target_path.startswith("v1/"):
+                    target_path = target_path[3:]
+
+                # Strip duplicate 'v1/' prefix if the base URL ends with 'v1'
+                if target_path.startswith("v1/") and (
+                    target_base_url.endswith("/v1") or target_base_url.endswith("/v1/")
+                ):
+                    target_path = target_path[3:]
 
         target_url = f"{target_base_url}/{target_path}"
 
@@ -677,11 +723,17 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                     yield chunk
 
                             async for chunk in iter_bytes():
-                                if SAVE_CHAT_LOGS:
+                                chunk_str = ""
+                                if SAVE_CHAT_LOGS or needs_gemini_response_translation:
                                     try:
                                         chunk_str = chunk.decode(
                                             "utf-8", errors="ignore"
                                         )
+                                    except Exception:
+                                        pass
+
+                                if SAVE_CHAT_LOGS and chunk_str:
+                                    try:
                                         text_part = extract_text_from_chunk(
                                             chunk_str, provider_name
                                         )
@@ -691,7 +743,30 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                         logger.debug(
                                             f"Error extracting text from chunk: {ce}"
                                         )
-                                yield chunk
+
+                                if needs_gemini_response_translation and chunk_str:
+                                    try:
+                                        translated_lines = []
+                                        for line in chunk_str.split("\n"):
+                                            line_stripped = line.strip()
+                                            if line_stripped:
+                                                translated_line = (
+                                                    translate_openai_chunk_to_gemini(
+                                                        line_stripped
+                                                    )
+                                                )
+                                                translated_lines.append(translated_line)
+                                            else:
+                                                translated_lines.append(line)
+                                        translated_chunk = "\n".join(translated_lines)
+                                        yield translated_chunk.encode("utf-8")
+                                    except Exception as te:
+                                        logger.debug(
+                                            f"Failed to translate response chunk: {te}"
+                                        )
+                                        yield chunk
+                                else:
+                                    yield chunk
                         finally:
                             await response.aclose()
                             if SAVE_CHAT_LOGS and (
