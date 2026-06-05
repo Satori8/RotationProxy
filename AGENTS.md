@@ -45,3 +45,6 @@ If you didn't use devctx tools in a non-trivial programming task, add at the end
 ## 🇷🇺 Russian Windows Encoding Guardrail
 * **System Environment:** The user's system runs Windows with Russian language settings (default console encodings: CP1251 / CP866).
 * **Encoding Rule:** When executing PowerShell or cmd commands via `bash`, `smart-context_smart_shell`, or other shell tools, ALWAYS force transcoding of the output to UTF-8 (e.g., by prepending `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8;` or similar commands in PowerShell) and decode using `utf-8` with fallback to avoid encoding errors or mangled Cyrillic characters.
+
+## 🌐 Language & Token Efficiency Rule
+* **Language Rule:** Even though the user may write input in Russian or Ukrainian, the response and thoughts must be in English for token efficiency, unless explicitly requested otherwise.
