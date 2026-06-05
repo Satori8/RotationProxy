@@ -605,7 +605,10 @@ def inject_tool_guardrails(data):
 1. You are STRICTLY FORBIDDEN from using the generic 'read' or 'write' tools for any code files (Python, TS, JS, Go, Rust, C++, C#, etc.).
 2. For reading code files, you MUST use 'smart-context_smart_read' (mode='outline'/'signatures'/'symbol') or 'token-savior_get_function_source'.
 3. For modifying code files, you MUST use 'token-savior_replace_symbol_source' or 'edit'.
-4. Direct 'read' and 'write' tools are restricted and will fail if used on code files. Always prefer optimized tools.]"""
+4. For searching code or text, you MUST use 'smart-context_smart_search' or 'token-savior_search_codebase' instead of generic 'grep' or 'search'.
+5. For finding files by name, you MUST use 'fff_find_files' or 'cortexast_cortex_code_explorer' instead of generic 'glob' or 'find'.
+6. For running build, test, lint, or git checks, you MUST use 'smart-context_smart_shell' instead of generic 'shell'.
+7. Direct 'read', 'write', 'grep', 'glob', and 'shell' tools are restricted and should be avoided in favor of optimized tools.]"""
 
     # Helper to clean up bad instructions in Fixer/Refactorer prompts
     def clean_bad_instructions(text: str) -> str:
@@ -614,7 +617,7 @@ def inject_tool_guardrails(data):
         # Replace "use grep/glob/read directly"
         text = re.sub(
             r"use grep/glob/read directly",
-            "use smart-context_smart_read and token-savior tools directly",
+            "use smart-context_smart_search, token-savior_search_codebase, or fff_find_files directly",
             text,
             flags=re.IGNORECASE,
         )
