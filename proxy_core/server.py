@@ -576,6 +576,115 @@ def translate_openai_chunk_to_gemini(openai_chunk_str: str) -> str:
     return openai_chunk_str
 
 
+def add_anomaly_to_state(model: str, msg: str):
+    try:
+        from proxy_core import state
+        from datetime import datetime
+
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        anomaly_str = f"[{timestamp}] [{model}] {msg}"
+        if not hasattr(state, "RECENT_ANOMALIES"):
+            state.RECENT_ANOMALIES = []
+        state.RECENT_ANOMALIES.append(anomaly_str)
+        if len(state.RECENT_ANOMALIES) > 100:
+            state.RECENT_ANOMALIES.pop(0)
+    except Exception as e:
+        logger.error(f"Failed to add anomaly to state: {e}")
+
+
+async def analyze_response_for_anomalies(
+    raw_response: bytes, response_text: str, model: str, provider: str
+):
+    try:
+        if not raw_response:
+            logger.warning(
+                f"[{model}] [Anomaly] Response is completely empty (0 bytes)."
+            )
+            add_anomaly_to_state(model, "Response is completely empty (0 bytes).")
+            return
+
+        # Check if accumulated text is empty
+        if not response_text or not response_text.strip():
+            msg = f"Response text is empty or only whitespace (Provider: {provider})."
+            logger.warning(f"[{model}] [Anomaly] {msg}")
+            add_anomaly_to_state(model, msg)
+
+        # Parse chunks to extract finish reasons and check JSON validity
+        finish_reasons = set()
+        has_valid_json = False
+        has_data_lines = False
+
+        lines = raw_response.decode("utf-8", errors="ignore").split("\n")
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            # Handle SSE data: prefix
+            if line.startswith("data:"):
+                has_data_lines = True
+                data_content = line[5:].strip()
+                if data_content == "[DONE]":
+                    continue
+                try:
+                    data = json.loads(data_content)
+                    has_valid_json = True
+
+                    # Check Gemini format
+                    candidates = data.get("candidates", [])
+                    for cand in candidates:
+                        fr = cand.get("finishReason")
+                        if fr:
+                            finish_reasons.add(str(fr).upper())
+
+                    # Check OpenAI format
+                    choices = data.get("choices", [])
+                    for choice in choices:
+                        fr = choice.get("finish_reason")
+                        if fr:
+                            finish_reasons.add(str(fr).upper())
+                except Exception:
+                    pass
+            else:
+                # If it's not SSE, try to parse the whole thing as a single JSON
+                if not has_data_lines:
+                    try:
+                        data = json.loads(line)
+                        has_valid_json = True
+                        candidates = data.get("candidates", [])
+                        for cand in candidates:
+                            fr = cand.get("finishReason")
+                            if fr:
+                                finish_reasons.add(str(fr).upper())
+                        choices = data.get("choices", [])
+                        for choice in choices:
+                            fr = choice.get("finish_reason")
+                            if fr:
+                                finish_reasons.add(str(fr).upper())
+                    except Exception:
+                        pass
+
+        # Check for finishReason anomalies
+        for fr in finish_reasons:
+            if fr not in ("STOP", "NONE"):
+                msg = f"Stream finished with non-standard reason: '{fr}' (Provider: {provider})"
+                logger.warning(f"[{model}] [Anomaly] {msg}")
+                add_anomaly_to_state(model, msg)
+
+        # Check for format anomalies
+        if has_data_lines and not has_valid_json:
+            msg = "Received SSE stream but failed to parse any valid JSON chunks."
+            logger.warning(f"[{model}] [Anomaly] {msg}")
+            add_anomaly_to_state(model, msg)
+        elif not has_data_lines and not has_valid_json:
+            msg = f"Response is not valid JSON and not an SSE stream. Raw: {raw_response[:200]}"
+            logger.warning(f"[{model}] [Anomaly] {msg}")
+            add_anomaly_to_state(model, msg)
+
+    except Exception as e:
+        logger.error(f"Error during response anomaly analysis: {e}")
+
+
 def mark_cooldown(key: str, duration: float = 60.0) -> None:
     COOLDOWNS[key] = time.time() + duration
 
@@ -843,6 +952,26 @@ async def global_reset_endpoint():
     return {"status": "success", "message": "Global reset successful."}
 
 
+@app.get("/control/stats")
+async def get_control_stats():
+    from proxy_core import state
+
+    return {
+        "compactor_orig_bytes": getattr(state, "COMPACTOR_ORIG_BYTES", 0),
+        "compactor_comp_bytes": getattr(state, "COMPACTOR_COMP_BYTES", 0),
+        "compactor_saved_tools": getattr(state, "COMPACTOR_SAVED_TOOLS", 0),
+        "compactor_saved_superpowers": getattr(state, "COMPACTOR_SAVED_SUPERPOWERS", 0),
+        "compactor_saved_skills": getattr(state, "COMPACTOR_SAVED_SKILLS", 0),
+        "compactor_saved_devctx": getattr(state, "COMPACTOR_SAVED_DEVCTX", 0),
+        "compactor_saved_generic_read": getattr(
+            state, "COMPACTOR_SAVED_GENERIC_READ", 0
+        ),
+        "compactor_saved_reminders": getattr(state, "COMPACTOR_SAVED_REMINDERS", 0),
+        "compactor_injections_count": getattr(state, "COMPACTOR_INJECTIONS_COUNT", 0),
+        "anomalies": getattr(state, "RECENT_ANOMALIES", []),
+    }
+
+
 @app.api_route(
     "/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
 )
@@ -886,7 +1015,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
             orig_size = len(body)
             payload_dict = json.loads(body_str, strict=False)
-            compacted_dict = process_request_payload(payload_dict)
+            compacted_dict = process_request_payload(payload_dict, rotation_config)
             body = json.dumps(
                 compacted_dict, ensure_ascii=False, separators=(",", ":")
             ).encode("utf-8")
@@ -1337,8 +1466,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                             async def iter_bytes():
                                 try:
                                     async for chunk in response.aiter_bytes():
-                                        if SAVE_CHAT_LOGS:
-                                            raw_chunks_buffer.append(chunk)
+                                        raw_chunks_buffer.append(chunk)
                                         yield chunk
                                 except (httpx.ReadError, httpx.HTTPError) as he:
                                     logger.error(
@@ -1359,18 +1487,14 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                             async def iter_translated_chunks():
                                 async for chunk in iter_bytes():
                                     chunk_str = ""
-                                    if (
-                                        SAVE_CHAT_LOGS
-                                        or needs_gemini_response_translation
-                                    ):
-                                        try:
-                                            chunk_str = chunk.decode(
-                                                "utf-8", errors="ignore"
-                                            )
-                                        except Exception:
-                                            pass
+                                    try:
+                                        chunk_str = chunk.decode(
+                                            "utf-8", errors="ignore"
+                                        )
+                                    except Exception:
+                                        pass
 
-                                    if SAVE_CHAT_LOGS and chunk_str:
+                                    if chunk_str:
                                         try:
                                             text_part = extract_text_from_chunk(
                                                 chunk_str, provider_name
@@ -1426,10 +1550,21 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                             raise
                         finally:
                             await response.aclose()
+                            response_text = "".join(response_text_buffer)
+                            raw_req_bytes = body
+                            raw_resp_bytes = b"".join(raw_chunks_buffer)
+
+                            # Always analyze response for anomalies in the background
+                            asyncio.create_task(
+                                analyze_response_for_anomalies(
+                                    raw_response=raw_resp_bytes,
+                                    response_text=response_text,
+                                    model=candidate_model,
+                                    provider=provider_name,
+                                )
+                            )
+
                             if SAVE_CHAT_LOGS:
-                                response_text = "".join(response_text_buffer)
-                                raw_req_bytes = body
-                                raw_resp_bytes = b"".join(raw_chunks_buffer)
                                 asyncio.create_task(
                                     write_chat_log(
                                         model=candidate_model,

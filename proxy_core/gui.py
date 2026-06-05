@@ -108,6 +108,7 @@ class ProxyGUI(ctk.CTk):
         self.restart_count = 0
         self.restart_backoff = 1.0
         self._restart_pending = False
+        self.compactor_settings_win = None
 
         import sys
 
@@ -341,6 +342,18 @@ class ProxyGUI(ctk.CTk):
         )
         self.stats_label.pack(anchor="w")
 
+        # Compactor Settings Button
+        self.compactor_settings_btn = ctk.CTkButton(
+            self.stats_frame,
+            text="⚙ Compactor Settings",
+            font=ctk.CTkFont(size=10, weight="bold"),
+            height=20,
+            command=self.open_compactor_settings_window,
+            fg_color="#34495E",
+            hover_color="#2C3E50",
+        )
+        self.compactor_settings_btn.pack(anchor="w", pady=(5, 0))
+
         self.right_panel = ctk.CTkFrame(self, corner_radius=10)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.right_panel.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
@@ -355,6 +368,7 @@ class ProxyGUI(ctk.CTk):
         self.tabview.add("Model Manager")
         self.tabview.add("VPN Manager")
         self.tabview.add("Settings")
+        self.tabview.add("Anomalies")
 
         # Tab 1: Console Logs
         self.tab_logs = self.tabview.tab("Console Logs")
@@ -476,6 +490,17 @@ class ProxyGUI(ctk.CTk):
         self.tab_settings = self.tabview.tab("Settings")
         self.tab_settings.grid_columnconfigure(0, weight=1)
         self.tab_settings.grid_rowconfigure(0, weight=1)
+
+        # Tab 5: Anomalies
+        self.anomalies_tab = self.tabview.tab("Anomalies")
+        self.anomalies_textbox = ctk.CTkTextbox(
+            self.anomalies_tab,
+            font=ctk.CTkFont(family="Consolas", size=11),
+            text_color="#E74C3C",
+        )
+        self.anomalies_textbox.pack(fill="both", expand=True, padx=10, pady=10)
+        self.anomalies_textbox.insert("1.0", "No anomalies detected yet.")
+        self.anomalies_textbox.configure(state="disabled")
 
         # Load settings UI
         self.load_settings_ui()
@@ -1708,25 +1733,197 @@ class ProxyGUI(ctk.CTk):
         self.do_poll_vpn_status()
         self.after(15000, self.poll_vpn_status_loop)
 
-    def poll_compactor_stats_loop(self):
-        """Periodic loop to poll compactor statistics from state and update UI."""
-        from proxy_core import state
+    def format_size(self, size_bytes):
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.1f} KB"
+        else:
+            return f"{size_bytes / (1024 * 1024):.2f} MB"
 
-        orig = getattr(state, "COMPACTOR_ORIG_BYTES", 0)
-        comp = getattr(state, "COMPACTOR_COMP_BYTES", 0)
+    def poll_compactor_stats_loop(self):
+        """Periodic loop to poll compactor statistics from the server and update UI."""
+        import httpx
+
+        def do_poll():
+            try:
+                url = f"http://{self.host}:{self.port}/control/stats"
+                response = httpx.get(url, timeout=1.0)
+                if response.status_code == 200:
+                    data = response.json()
+                    self.after(0, lambda: self.update_stats_ui(data))
+            except Exception:
+                # Server might be offline or starting
+                pass
+            finally:
+                self.after(2000, self.poll_compactor_stats_loop)
+
+        threading.Thread(target=do_poll, daemon=True).start()
+
+    def open_compactor_settings_window(self):
+        """Open a settings window for the context compactor."""
+        if (
+            self.compactor_settings_win is not None
+            and self.compactor_settings_win.winfo_exists()
+        ):
+            self.compactor_settings_win.focus()
+            return
+
+        self.compactor_settings_win = ctk.CTkToplevel(self)
+        self.compactor_settings_win.title("Compactor Settings")
+        self.compactor_settings_win.geometry("480x420")
+        self.compactor_settings_win.resizable(False, False)
+        self.compactor_settings_win.attributes("-topmost", True)
+
+        # Main frame
+        main_frame = ctk.CTkFrame(self.compactor_settings_win, corner_radius=10)
+        main_frame.pack(fill="both", expand=True, padx=15, pady=15)
+
+        # Title
+        title_lbl = ctk.CTkLabel(
+            main_frame,
+            text="Context Compactor Settings",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#3498DB",
+        )
+        title_lbl.pack(pady=(10, 15))
+
+        # Checkboxes frame
+        cb_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        cb_frame.pack(fill="both", expand=True, padx=10)
+
+        config = load_rotation_config()
+
+        # Checkboxes for other compactor settings
+        self.var_compact_tools = tk.BooleanVar(
+            value=config.get("compactor_compact_tools", True)
+        )
+        self.cb_compact_tools = ctk.CTkCheckBox(
+            cb_frame,
+            text="Compact Tool Descriptions",
+            variable=self.var_compact_tools,
+            font=ctk.CTkFont(size=11),
+        )
+        self.cb_compact_tools.pack(anchor="w", pady=5)
+
+        self.var_compact_superpowers = tk.BooleanVar(
+            value=config.get("compactor_compact_superpowers", True)
+        )
+        self.cb_compact_superpowers = ctk.CTkCheckBox(
+            cb_frame,
+            text="Compact Superpowers Instructions",
+            variable=self.var_compact_superpowers,
+            font=ctk.CTkFont(size=11),
+        )
+        self.cb_compact_superpowers.pack(anchor="w", pady=5)
+
+        self.var_compact_skills = tk.BooleanVar(
+            value=config.get("compactor_compact_skills", True)
+        )
+        self.cb_compact_skills = ctk.CTkCheckBox(
+            cb_frame,
+            text="Compact Skill Responses",
+            variable=self.var_compact_skills,
+            font=ctk.CTkFont(size=11),
+        )
+        self.cb_compact_skills.pack(anchor="w", pady=5)
+
+        self.var_compact_devctx = tk.BooleanVar(
+            value=config.get("compactor_compact_devctx", True)
+        )
+        self.cb_compact_devctx = ctk.CTkCheckBox(
+            cb_frame,
+            text="Compact Devctx Instructions",
+            variable=self.var_compact_devctx,
+            font=ctk.CTkFont(size=11),
+        )
+        self.cb_compact_devctx.pack(anchor="w", pady=5)
+
+        self.var_block_generic_read = tk.BooleanVar(
+            value=config.get("compactor_block_generic_read", True)
+        )
+        self.cb_block_generic_read = ctk.CTkCheckBox(
+            cb_frame,
+            text="Block Generic Read on Code Files",
+            variable=self.var_block_generic_read,
+            font=ctk.CTkFont(size=11),
+        )
+        self.cb_block_generic_read.pack(anchor="w", pady=5)
+
+        self.var_move_reminders = tk.BooleanVar(
+            value=config.get("compactor_move_reminders", True)
+        )
+        self.cb_move_reminders = ctk.CTkCheckBox(
+            cb_frame,
+            text="Move Reminders to System Instruction",
+            variable=self.var_move_reminders,
+            font=ctk.CTkFont(size=11),
+        )
+        self.cb_move_reminders.pack(anchor="w", pady=5)
+
+        self.var_inject_guardrails = tk.BooleanVar(
+            value=config.get("compactor_inject_guardrails", True)
+        )
+        self.cb_inject_guardrails = ctk.CTkCheckBox(
+            cb_frame,
+            text="Inject Tool Guardrails (Injected: 0 times)",
+            variable=self.var_inject_guardrails,
+            font=ctk.CTkFont(size=11),
+        )
+        self.cb_inject_guardrails.pack(anchor="w", pady=5)
+
+        # Save settings callback
+        def save_settings():
+            try:
+                cfg = load_rotation_config()
+                cfg["compactor_compact_tools"] = self.var_compact_tools.get()
+                cfg["compactor_compact_superpowers"] = (
+                    self.var_compact_superpowers.get()
+                )
+                cfg["compactor_compact_skills"] = self.var_compact_skills.get()
+                cfg["compactor_compact_devctx"] = self.var_compact_devctx.get()
+                cfg["compactor_block_generic_read"] = self.var_block_generic_read.get()
+                cfg["compactor_move_reminders"] = self.var_move_reminders.get()
+                cfg["compactor_inject_guardrails"] = self.var_inject_guardrails.get()
+                save_rotation_config(cfg)
+                logger.info("[GUI] Compactor settings saved successfully.")
+                log_queue.put("[GUI] Compactor settings saved successfully.")
+                self.compactor_settings_win.destroy()
+            except Exception as e:
+                logger.error(f"[GUI] Failed to save compactor settings: {e}")
+                log_queue.put(f"[GUI] [ERROR] Failed to save compactor settings: {e}")
+
+        # Save button
+        save_btn = ctk.CTkButton(
+            main_frame,
+            text="Save & Close",
+            fg_color="#27AE60",
+            hover_color="#2ECC71",
+            command=save_settings,
+        )
+        save_btn.pack(pady=(15, 10))
+
+    def update_stats_ui(self, data):
+        """Update the compactor statistics labels and settings window in real-time."""
+        orig = data.get("compactor_orig_bytes", 0)
+        comp = data.get("compactor_comp_bytes", 0)
         saved = orig - comp
         pct = (saved / orig) * 100 if orig > 0 else 0.0
 
-        def format_size(size_bytes):
-            if size_bytes < 1024:
-                return f"{size_bytes} B"
-            elif size_bytes < 1024 * 1024:
-                return f"{size_bytes / 1024:.1f} KB"
-            else:
-                return f"{size_bytes / (1024 * 1024):.2f} MB"
+        self.stats_label.configure(
+            text=f"Saved: {self.format_size(saved)} (-{pct:.1f}%)"
+        )
 
-        self.stats_label.configure(text=f"Saved: {format_size(saved)} (-{pct:.1f}%)")
-        self.after(2000, self.poll_compactor_stats_loop)
+        # Update the injections count label if the settings window is open
+        if (
+            self.compactor_settings_win is not None
+            and self.compactor_settings_win.winfo_exists()
+            and hasattr(self, "cb_inject_guardrails")
+        ):
+            injections_count = data.get("compactor_injections_count", 0)
+            self.cb_inject_guardrails.configure(
+                text=f"Inject Tool Guardrails (Injected: {injections_count} times)"
+            )
 
     def do_poll_vpn_status(self):
         """Run parallel ping checks for active VPN channels to measure latency and service state."""
@@ -1932,13 +2129,12 @@ class ProxyGUI(ctk.CTk):
         """Save errors threshold when clicked."""
         config = load_rotation_config()
         try:
-            val = int(self.threshold_entry.get().strip())
-            if val < 1:
-                val = 1
+            threshold_val = int(self.threshold_entry.get().strip())
+            if threshold_val < 1:
+                threshold_val = 1
         except ValueError:
-            val = 5
+            threshold_val = 5
 
-        config["vpn_errors_threshold"] = val
+        config["vpn_errors_threshold"] = threshold_val
         save_rotation_config(config)
-        logger.info(f"[GUI] Saved VPN errors threshold: {val}")
-        log_queue.put(f"[GUI] Saved VPN errors threshold: {val}")
+        logger.info(f"[GUI] Saved VPN errors threshold: {threshold_val}")

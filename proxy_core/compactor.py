@@ -184,9 +184,27 @@ def compact_tools_with_static_map(data):
         return data
 
     for tool_group in data["tools"]:
-        if "functionDeclarations" not in tool_group:
-            continue
-        for func in tool_group["functionDeclarations"]:
+        # Gemini format
+        if "functionDeclarations" in tool_group:
+            for func in tool_group["functionDeclarations"]:
+                name = func.get("name")
+                if name in COMPACTED_TOOLS:
+                    cfg = COMPACTED_TOOLS[name]
+                    if "description" in cfg:
+                        func["description"] = cfg["description"]
+                    if (
+                        "properties" in cfg
+                        and "parameters" in func
+                        and "properties" in func["parameters"]
+                    ):
+                        for param_name, new_desc in cfg["properties"].items():
+                            if param_name in func["parameters"]["properties"]:
+                                func["parameters"]["properties"][param_name][
+                                    "description"
+                                ] = new_desc
+        # OpenAI format
+        elif tool_group.get("type") == "function" and "function" in tool_group:
+            func = tool_group["function"]
             name = func.get("name")
             if name in COMPACTED_TOOLS:
                 cfg = COMPACTED_TOOLS[name]
@@ -234,41 +252,75 @@ Invoke relevant or requested skills BEFORE any response or action.
 
 def compact_skill_responses(data):
     """
-    Inspects the contents array for any functionResponse from the 'skill' tool.
+    Inspects the contents array (Gemini) or messages array (OpenAI) for any functionResponse from the 'skill' tool.
     If the skill is 'using-superpowers', strips out other platform instructions
     and the useless <skill_files> block to save tokens.
     """
-    if "contents" not in data:
-        return data
+    # --- Gemini Format ---
+    if "contents" in data:
+        for message in data["contents"]:
+            if "parts" not in message:
+                continue
+            for part in message["parts"]:
+                if "functionResponse" in part:
+                    func_resp = part["functionResponse"]
+                    if func_resp.get("name") == "skill" and "response" in func_resp:
+                        resp_obj = func_resp["response"]
+                        if "content" in resp_obj and isinstance(
+                            resp_obj["content"], str
+                        ):
+                            content_str = resp_obj["content"]
+                            if (
+                                '<skill_content name="using-superpowers">'
+                                in content_str
+                            ):
+                                # 1. Strip other platform instructions
+                                pattern_access = (
+                                    r"## How to Access Skills.*?# Using Skills"
+                                )
+                                replacement_access = "## How to Access Skills\n\nIn OpenCode, use the native `skill` tool to list and load skills.\n\n# Using Skills"
+                                content_str = re.sub(
+                                    pattern_access,
+                                    replacement_access,
+                                    content_str,
+                                    flags=re.DOTALL,
+                                )
 
-    for message in data["contents"]:
-        if "parts" not in message:
-            continue
-        for part in message["parts"]:
-            if "functionResponse" in part:
-                func_resp = part["functionResponse"]
-                if func_resp.get("name") == "skill" and "response" in func_resp:
-                    resp_obj = func_resp["response"]
-                    if "content" in resp_obj and isinstance(resp_obj["content"], str):
-                        content_str = resp_obj["content"]
-                        if '<skill_content name="using-superpowers">' in content_str:
-                            # 1. Strip other platform instructions
-                            pattern_access = r"## How to Access Skills.*?# Using Skills"
-                            replacement_access = "## How to Access Skills\n\nIn OpenCode, use the native `skill` tool to list and load skills.\n\n# Using Skills"
-                            content_str = re.sub(
-                                pattern_access,
-                                replacement_access,
-                                content_str,
-                                flags=re.DOTALL,
-                            )
+                                # 2. Strip <skill_files> block
+                                pattern_files = r"<skill_files>.*?</skill_files>"
+                                content_str = re.sub(
+                                    pattern_files, "", content_str, flags=re.DOTALL
+                                )
 
-                            # 2. Strip <skill_files> block
-                            pattern_files = r"<skill_files>.*?</skill_files>"
-                            content_str = re.sub(
-                                pattern_files, "", content_str, flags=re.DOTALL
-                            )
+                                resp_obj["content"] = content_str
 
-                            resp_obj["content"] = content_str
+    # --- OpenAI Format ---
+    if "messages" in data:
+        for msg in data["messages"]:
+            if (
+                msg.get("role") == "tool"
+                and "content" in msg
+                and isinstance(msg["content"], str)
+            ):
+                content_str = msg["content"]
+                if '<skill_content name="using-superpowers">' in content_str:
+                    # 1. Strip other platform instructions
+                    pattern_access = r"## How to Access Skills.*?# Using Skills"
+                    replacement_access = "## How to Access Skills\n\nIn OpenCode, use the native `skill` tool to list and load skills.\n\n# Using Skills"
+                    content_str = re.sub(
+                        pattern_access,
+                        replacement_access,
+                        content_str,
+                        flags=re.DOTALL,
+                    )
+
+                    # 2. Strip <skill_files> block
+                    pattern_files = r"<skill_files>.*?</skill_files>"
+                    content_str = re.sub(
+                        pattern_files, "", content_str, flags=re.DOTALL
+                    )
+
+                    msg["content"] = content_str
     return data
 
 
@@ -282,9 +334,10 @@ def strip_cursor_mode_from_devctx(text):
 
 def compact_devctx_instructions(data):
     """
-    Looks for the <!-- devctx:start --> block in systemInstruction or contents,
-    and strips out the 'Cursor assisted mode' section since we are in OpenCode.
+    Looks for the <!-- devctx:start --> block in systemInstruction or contents (Gemini),
+    or system/messages (OpenAI), and strips out the 'Cursor assisted mode' section.
     """
+    # --- Gemini Format ---
     if "systemInstruction" in data:
         sys_inst = data["systemInstruction"]
         if "parts" in sys_inst:
@@ -300,53 +353,89 @@ def compact_devctx_instructions(data):
                 if "text" in part and isinstance(part["text"], str):
                     part["text"] = strip_cursor_mode_from_devctx(part["text"])
 
+    # --- OpenAI Format ---
+    if "system" in data and isinstance(data["system"], str):
+        data["system"] = strip_cursor_mode_from_devctx(data["system"])
+
+    if "messages" in data:
+        for msg in data["messages"]:
+            if "content" in msg and isinstance(msg["content"], str):
+                msg["content"] = strip_cursor_mode_from_devctx(msg["content"])
+
     return data
 
 
 def compact_contents_superpowers(data):
-    """Compact the using-superpowers skill block in the contents array."""
-    if "contents" not in data:
-        return data
+    """Compact the using-superpowers skill block in the contents array (Gemini) or messages array (OpenAI)."""
+    # --- Gemini Format ---
+    if "contents" in data:
+        for message in data["contents"]:
+            if "parts" not in message:
+                continue
+            for part in message["parts"]:
+                if "text" in part and isinstance(part["text"], str):
+                    part["text"] = compact_using_superpowers_block(part["text"])
 
-    for message in data["contents"]:
-        if "parts" not in message:
-            continue
-        for part in message["parts"]:
-            if "text" in part and isinstance(part["text"], str):
-                part["text"] = compact_using_superpowers_block(part["text"])
+    # --- OpenAI Format ---
+    if "messages" in data:
+        for msg in data["messages"]:
+            if "content" in msg and isinstance(msg["content"], str):
+                msg["content"] = compact_using_superpowers_block(msg["content"])
     return data
 
 
 def block_generic_read_on_code_files(data):
     """
-    Inspects the contents array for any functionResponse from the generic 'read' tool.
+    Inspects the contents array (Gemini) or messages array (OpenAI) for any functionResponse from the generic 'read' tool.
     If the file being read is a code or structured file, replaces its content with a hard warning.
     """
-    if "contents" not in data:
-        return data
+    # --- Gemini Format ---
+    if "contents" in data:
+        for message in data["contents"]:
+            if "parts" not in message:
+                continue
+            for part in message["parts"]:
+                if "functionResponse" in part:
+                    func_resp = part["functionResponse"]
+                    if func_resp.get("name") == "read" and "response" in func_resp:
+                        resp_obj = func_resp["response"]
+                        if "content" in resp_obj and isinstance(
+                            resp_obj["content"], str
+                        ):
+                            content_str = resp_obj["content"]
+                            # Extract path from <path>...</path>
+                            match = re.search(r"<path>(.*?)</path>", content_str)
+                            if match:
+                                file_path = match.group(1)
+                                _, ext = os.path.splitext(file_path.lower())
+                                if ext in CODE_EXTENSIONS:
+                                    # Replace the content with a hard warning!
+                                    warning_msg = f"<path>{file_path}</path>\n<type>file</type>\n<content>Error: Direct use of the generic 'read' tool is restricted for code and structured files. You MUST use 'smart-context_smart_read' with mode='outline' or mode='signatures' (for code) or mode='explain'/'outline' (for structured files) first to inspect the file structure, or 'token-savior_get_function_source' for specific symbols.</content>"
+                                    resp_obj["content"] = warning_msg
+                                    logger.debug(
+                                        f"[Compactor] Blocked generic 'read' on code/structured file: {file_path}"
+                                    )
 
-    for message in data["contents"]:
-        if "parts" not in message:
-            continue
-        for part in message["parts"]:
-            if "functionResponse" in part:
-                func_resp = part["functionResponse"]
-                if func_resp.get("name") == "read" and "response" in func_resp:
-                    resp_obj = func_resp["response"]
-                    if "content" in resp_obj and isinstance(resp_obj["content"], str):
-                        content_str = resp_obj["content"]
-                        # Extract path from <path>...</path>
-                        match = re.search(r"<path>(.*?)</path>", content_str)
-                        if match:
-                            file_path = match.group(1)
-                            _, ext = os.path.splitext(file_path.lower())
-                            if ext in CODE_EXTENSIONS:
-                                # Replace the content with a hard warning!
-                                warning_msg = f"<path>{file_path}</path>\n<type>file</type>\n<content>Error: Direct use of the generic 'read' tool is restricted for code and structured files. You MUST use 'smart-context_smart_read' with mode='outline' or mode='signatures' (for code) or mode='explain'/'outline' (for structured files) first to inspect the file structure, or 'token-savior_get_function_source' for specific symbols.</content>"
-                                resp_obj["content"] = warning_msg
-                                logger.debug(
-                                    f"[Compactor] Blocked generic 'read' on code/structured file: {file_path}"
-                                )
+    # --- OpenAI Format ---
+    if "messages" in data:
+        for msg in data["messages"]:
+            if (
+                msg.get("role") == "tool"
+                and "content" in msg
+                and isinstance(msg["content"], str)
+            ):
+                content_str = msg["content"]
+                match = re.search(r"<path>(.*?)</path>", content_str)
+                if match:
+                    file_path = match.group(1)
+                    _, ext = os.path.splitext(file_path.lower())
+                    if ext in CODE_EXTENSIONS:
+                        # Replace the content with a hard warning!
+                        warning_msg = f"<path>{file_path}</path>\n<type>file</type>\n<content>Error: Direct use of the generic 'read' tool is restricted for code and structured files. You MUST use 'smart-context_smart_read' with mode='outline' or mode='signatures' (for code) or mode='explain'/'outline' (for structured files) first to inspect the file structure, or 'token-savior_get_function_source' for specific symbols.</content>"
+                        msg["content"] = warning_msg
+                        logger.debug(
+                            f"[Compactor] Blocked generic 'read' on code/structured file in messages: {file_path}"
+                        )
     return data
 
 
@@ -364,90 +453,305 @@ def clean_json_escapes(content):
 
 def move_reminder_to_system_instruction(data):
     """
-    Extracts the <internal_reminder> block from contents, strips it from all messages
-    to preserve prompt caching, and appends it to the systemInstruction so it is
-    always active and never lost during history compaction.
+    Extracts the <internal_reminder> block from contents (Gemini) or messages (OpenAI),
+    strips it from all messages to preserve prompt caching, and appends it to the
+    systemInstruction (Gemini) or system field/messages (OpenAI) so it is always active.
     """
-    if "contents" not in data:
-        return data
-
     reminder_content = None
     pattern = r"<internal_reminder>(.*?)</internal_reminder>"
 
-    # 1. Find and extract the first reminder block
-    for message in data["contents"]:
-        if "parts" not in message:
-            continue
-        for part in message["parts"]:
-            if "text" in part and isinstance(part["text"], str):
-                match = re.search(pattern, part["text"], flags=re.DOTALL)
+    # --- Gemini Format ---
+    if "contents" in data:
+        # 1. Find and extract the first reminder block
+        for message in data["contents"]:
+            if "parts" not in message:
+                continue
+            for part in message["parts"]:
+                if "text" in part and isinstance(part["text"], str):
+                    match = re.search(pattern, part["text"], flags=re.DOTALL)
+                    if match:
+                        reminder_content = match.group(1).strip()
+                        break
+            if reminder_content:
+                break
+
+        # 2. Strip all reminder blocks from contents
+        for message in data["contents"]:
+            if "parts" not in message:
+                continue
+            for part in message["parts"]:
+                if "text" in part and isinstance(part["text"], str):
+                    text = part["text"]
+                    if re.search(
+                        r"<internal_reminder>.*?</internal_reminder>",
+                        text,
+                        flags=re.DOTALL,
+                    ):
+                        part["text"] = re.sub(
+                            r"<internal_reminder>.*?</internal_reminder>",
+                            "",
+                            text,
+                            flags=re.DOTALL,
+                        )
+                        logger.debug(
+                            "[Compactor] Stripped <internal_reminder> block from Gemini message"
+                        )
+
+        # 3. Append reminder to systemInstruction
+        if reminder_content:
+            formatted_reminder = f"\n\n[System Reminder: {reminder_content}]"
+
+            if "systemInstruction" not in data:
+                data["systemInstruction"] = {
+                    "parts": [{"text": formatted_reminder.strip()}]
+                }
+                logger.debug("[Compactor] Created systemInstruction with reminder")
+            else:
+                sys_inst = data["systemInstruction"]
+                if "parts" in sys_inst:
+                    appended = False
+                    for part in sys_inst["parts"]:
+                        if "text" in part and isinstance(part["text"], str):
+                            if reminder_content[:30] not in part["text"]:
+                                part["text"] += formatted_reminder
+                                logger.debug(
+                                    "[Compactor] Appended reminder to systemInstruction"
+                                )
+                            appended = True
+                            break
+                    if not appended:
+                        sys_inst["parts"].append({"text": formatted_reminder.strip()})
+                        logger.debug(
+                            "[Compactor] Appended new part to systemInstruction"
+                        )
+
+    # --- OpenAI Format ---
+    if "messages" in data:
+        # 1. Find and extract the first reminder block
+        for msg in data["messages"]:
+            if "content" in msg and isinstance(msg["content"], str):
+                match = re.search(pattern, msg["content"], flags=re.DOTALL)
                 if match:
                     reminder_content = match.group(1).strip()
                     break
-        if reminder_content:
-            break
 
-    # 2. Strip all reminder blocks from contents
-    for message in data["contents"]:
-        if "parts" not in message:
-            continue
-        for part in message["parts"]:
-            if "text" in part and isinstance(part["text"], str):
-                text = part["text"]
+        # 2. Strip all reminder blocks from messages
+        for msg in data["messages"]:
+            if "content" in msg and isinstance(msg["content"], str):
+                text = msg["content"]
                 if re.search(
                     r"<internal_reminder>.*?</internal_reminder>", text, flags=re.DOTALL
                 ):
-                    part["text"] = re.sub(
+                    msg["content"] = re.sub(
                         r"<internal_reminder>.*?</internal_reminder>",
                         "",
                         text,
                         flags=re.DOTALL,
                     )
                     logger.debug(
-                        "[Compactor] Stripped <internal_reminder> block from message"
+                        "[Compactor] Stripped <internal_reminder> block from OpenAI message"
                     )
 
-    # 3. Append reminder to systemInstruction
-    if reminder_content:
-        formatted_reminder = f"\n\n[System Reminder: {reminder_content}]"
+        # 3. Append reminder to system prompt
+        if reminder_content:
+            formatted_reminder = f"\n\n[System Reminder: {reminder_content}]"
 
-        if "systemInstruction" not in data:
-            data["systemInstruction"] = {
-                "parts": [{"text": formatted_reminder.strip()}]
-            }
-            logger.debug("[Compactor] Created systemInstruction with reminder")
-        else:
-            sys_inst = data["systemInstruction"]
-            if "parts" in sys_inst:
-                appended = False
-                for part in sys_inst["parts"]:
-                    if "text" in part and isinstance(part["text"], str):
-                        if reminder_content[:30] not in part["text"]:
-                            part["text"] += formatted_reminder
-                            logger.debug(
-                                "[Compactor] Appended reminder to systemInstruction"
-                            )
-                        appended = True
+            # Check top-level system field
+            if "system" in data and isinstance(data["system"], str):
+                if reminder_content[:30] not in data["system"]:
+                    data["system"] += formatted_reminder
+                    logger.debug(
+                        "[Compactor] Appended reminder to top-level system field"
+                    )
+            else:
+                # Find system message in messages
+                system_msg = None
+                for msg in data["messages"]:
+                    if msg.get("role") == "system":
+                        system_msg = msg
                         break
-                if not appended:
-                    sys_inst["parts"].append({"text": formatted_reminder.strip()})
-                    logger.debug("[Compactor] Appended new part to systemInstruction")
+
+                if system_msg:
+                    if "content" in system_msg and isinstance(
+                        system_msg["content"], str
+                    ):
+                        if reminder_content[:30] not in system_msg["content"]:
+                            system_msg["content"] += formatted_reminder
+                            logger.debug(
+                                "[Compactor] Appended reminder to system message"
+                            )
+                else:
+                    # Create a new system message at the beginning
+                    data["messages"].insert(
+                        0, {"role": "system", "content": formatted_reminder.strip()}
+                    )
+                    logger.debug("[Compactor] Created system message with reminder")
 
     return data
 
 
-def process_request_payload(payload_dict):
+def inject_tool_guardrails(data):
+    """
+    Surgically modifies the system prompt (systemInstruction or system message)
+    to replace instructions that encourage using generic read/write on code,
+    and appends a strict tool guardrail block to enforce optimized tools.
+    """
+    import re
+    from proxy_core import state
+
+    guardrail_block = """
+
+[CRITICAL TOOL GUARDRAIL:
+1. You are STRICTLY FORBIDDEN from using the generic 'read' or 'write' tools for any code files (Python, TS, JS, Go, Rust, C++, C#, etc.).
+2. For reading code files, you MUST use 'smart-context_smart_read' (mode='outline'/'signatures'/'symbol') or 'token-savior_get_function_source'.
+3. For modifying code files, you MUST use 'token-savior_replace_symbol_source' or 'edit'.
+4. Direct 'read' and 'write' tools are restricted and will fail if used on code files. Always prefer optimized tools.]"""
+
+    # Helper to clean up bad instructions in Fixer/Refactorer prompts
+    def clean_bad_instructions(text: str) -> str:
+        if not isinstance(text, str):
+            return text
+        # Replace "use grep/glob/read directly"
+        text = re.sub(
+            r"use grep/glob/read directly",
+            "use smart-context_smart_read and token-savior tools directly",
+            text,
+            flags=re.IGNORECASE,
+        )
+        # Replace "Read files before using edit/write tools"
+        text = re.sub(
+            r"Read files before using edit/write tools",
+            "Read files using smart-context_smart_read before using edit/token-savior tools",
+            text,
+            flags=re.IGNORECASE,
+        )
+        return text
+
+    injected = False
+
+    # --- Gemini Format ---
+    if "systemInstruction" in data:
+        sys_inst = data["systemInstruction"]
+        if "parts" in sys_inst:
+            for part in sys_inst["parts"]:
+                if "text" in part and isinstance(part["text"], str):
+                    text = part["text"]
+                    text = clean_bad_instructions(text)
+                    if "CRITICAL TOOL GUARDRAIL" not in text:
+                        text += guardrail_block
+                        injected = True
+                    part["text"] = text
+                    logger.debug(
+                        "[Compactor] Injected tool guardrails into Gemini systemInstruction"
+                    )
+
+    # --- OpenAI Format ---
+    # 1. Top-level system field
+    if "system" in data and isinstance(data["system"], str):
+        text = data["system"]
+        text = clean_bad_instructions(text)
+        if "CRITICAL TOOL GUARDRAIL" not in text:
+            text += guardrail_block
+            injected = True
+        data["system"] = text
+        logger.debug("[Compactor] Injected tool guardrails into top-level system field")
+
+    # 2. System message in messages array
+    if "messages" in data:
+        for msg in data["messages"]:
+            if (
+                msg.get("role") == "system"
+                and "content" in msg
+                and isinstance(msg["content"], str)
+            ):
+                text = msg["content"]
+                text = clean_bad_instructions(text)
+                if "CRITICAL TOOL GUARDRAIL" not in text:
+                    text += guardrail_block
+                    injected = True
+                msg["content"] = text
+                logger.debug(
+                    "[Compactor] Injected tool guardrails into OpenAI system message"
+                )
+
+    if injected:
+        state.COMPACTOR_INJECTIONS_COUNT = (
+            getattr(state, "COMPACTOR_INJECTIONS_COUNT", 0) + 1
+        )
+
+    return data
+
+
+def process_request_payload(payload_dict, config=None):
     """Main entry point for GeminiProxy context compaction."""
+    if config is None:
+        config = {}
+
+    import json
+    from proxy_core import state
+
+    def get_payload_size(data):
+        try:
+            return len(json.dumps(data, ensure_ascii=False))
+        except Exception:
+            return 0
+
     # 1. Compact tools
-    payload_dict = compact_tools_with_static_map(payload_dict)
+    if config.get("compactor_compact_tools", True):
+        size_before = get_payload_size(payload_dict)
+        payload_dict = compact_tools_with_static_map(payload_dict)
+        size_after = get_payload_size(payload_dict)
+        state.COMPACTOR_SAVED_TOOLS = getattr(state, "COMPACTOR_SAVED_TOOLS", 0) + max(
+            0, size_before - size_after
+        )
+
     # 2. Compact superpowers block in contents
-    payload_dict = compact_contents_superpowers(payload_dict)
+    if config.get("compactor_compact_superpowers", True):
+        size_before = get_payload_size(payload_dict)
+        payload_dict = compact_contents_superpowers(payload_dict)
+        size_after = get_payload_size(payload_dict)
+        state.COMPACTOR_SAVED_SUPERPOWERS = getattr(
+            state, "COMPACTOR_SAVED_SUPERPOWERS", 0
+        ) + max(0, size_before - size_after)
+
     # 3. Compact skill responses
-    payload_dict = compact_skill_responses(payload_dict)
+    if config.get("compactor_compact_skills", True):
+        size_before = get_payload_size(payload_dict)
+        payload_dict = compact_skill_responses(payload_dict)
+        size_after = get_payload_size(payload_dict)
+        state.COMPACTOR_SAVED_SKILLS = getattr(
+            state, "COMPACTOR_SAVED_SKILLS", 0
+        ) + max(0, size_before - size_after)
+
     # 4. Compact devctx instructions
-    payload_dict = compact_devctx_instructions(payload_dict)
+    if config.get("compactor_compact_devctx", True):
+        size_before = get_payload_size(payload_dict)
+        payload_dict = compact_devctx_instructions(payload_dict)
+        size_after = get_payload_size(payload_dict)
+        state.COMPACTOR_SAVED_DEVCTX = getattr(
+            state, "COMPACTOR_SAVED_DEVCTX", 0
+        ) + max(0, size_before - size_after)
+
     # 5. Block generic read on code files
-    payload_dict = block_generic_read_on_code_files(payload_dict)
+    if config.get("compactor_block_generic_read", True):
+        size_before = get_payload_size(payload_dict)
+        payload_dict = block_generic_read_on_code_files(payload_dict)
+        size_after = get_payload_size(payload_dict)
+        state.COMPACTOR_SAVED_GENERIC_READ = getattr(
+            state, "COMPACTOR_SAVED_GENERIC_READ", 0
+        ) + max(0, size_before - size_after)
+
     # 6. Move internal reminders to systemInstruction to preserve prompt cache
-    payload_dict = move_reminder_to_system_instruction(payload_dict)
+    if config.get("compactor_move_reminders", True):
+        size_before = get_payload_size(payload_dict)
+        payload_dict = move_reminder_to_system_instruction(payload_dict)
+        size_after = get_payload_size(payload_dict)
+        state.COMPACTOR_SAVED_REMINDERS = getattr(
+            state, "COMPACTOR_SAVED_REMINDERS", 0
+        ) + max(0, size_before - size_after)
+
+    # 7. Inject Tool Guardrails to force optimized tools
+    if config.get("compactor_inject_guardrails", True):
+        payload_dict = inject_tool_guardrails(payload_dict)
+
     return payload_dict
