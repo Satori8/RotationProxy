@@ -11,14 +11,16 @@ A resilient, high-performance API key, model, and isolated VPN rotation proxy de
 - **Failover Model Rotation**: If all keys for a requested model are exhausted or rate-limited, the proxy automatically falls back to alternative free models in its rotation list (e.g., DeepSeek v4 Flash, Kimi K2.6, Llama 3.3, Qwen 3 Coder, etc.) to guarantee high availability.
 - **Self-Healing Key Registry**: Bad keys are logged to `error_keys_log.json`. However, as soon as a key successfully processes a request (HTTP 200), it is automatically cleared and vindicated from the error log.
 
-### 🔌 2. WireGuard VPN Tunnel Manager (Isolated Socket Routing)
+### 🔌 2. WireGuard VPN Tunnel Manager & Health Check
 - **Isolated Socket-Level Routing**: Outgoing API requests are routed through specific VPN indexes using **socket-level local address binding**. The system-wide routing table is **never** modified! Your browser, games, and other apps stay on your default home ISP, while *only* the proxy's API requests go through the VPN.
 - **Multi-Client Connection Pool**: FastAPI initializes 7 pre-configured `httpx.AsyncClient` instances on startup. Client `0` uses your home ISP, while clients `1` to `6` bind their sockets to the local IPs of active WireGuard interfaces (`10.8.0.11` through `10.8.0.16`).
 - **Dynamic Routing Modes**:
   - **Disabled ("Выкл")**: Outgoing requests use your home internet, or bind to a manual static VPN index (1-6) on demand.
   - **Every Request ("Каждый запрос")**: Automatically rotates the outgoing socket IP address in a round-robin fashion before every single API call (Indexes 1-6).
   - **After N Errors ("Смена после N ошибок")**: Tracks consecutive errors (429s, network timeouts) and rotates client socket IP instantly when the user-defined threshold $N$ is reached, retrying immediately with no sleep.
-- **Activity Status Polling**: On the GUI, a visual indicator (**🟢 VPN Active** / **🔴 VPN Inactive**) polls the state of the Windows WireGuard background services every 5 seconds.
+- **VPN Heartbeat & Route Recovery**: A 1.0s background heartbeat loop checks each VPN channel. If a channel goes down, it automatically runs a fast, non-blocking PowerShell route recovery and service restart with adapter polling.
+- **Service-State Awareness**: The heartbeat loop checks which WireGuard services are actually running in the system first, skipping checks for stopped or uninstalled tunnels to prevent false alarms.
+- **Transition Grace Period & Fallback**: If all tunnels are stopped, the proxy instantly falls back to the unbound client (index 0) and suspends VPN rotation. A 5-second network stabilization grace period allows Windows to restore the physical default route.
 - **Auto-Cleanup on Close**: When the GUI is closed, it automatically stops and uninstalls all background WireGuard services (`uninstall_all_services()`) to leave Windows completely clean.
 
 ### 🎛️ 3. Model Manager Hub & Diagnostics
@@ -36,6 +38,19 @@ A resilient, high-performance API key, model, and isolated VPN rotation proxy de
 - **Accurate Call Counting**: Uses a smart deduplication algorithm to count the exact number of times each tool was called in `functionCall` blocks across the entire history, with zero double-counting.
 - **JSON Repair & Fallback**: Features a robust JSON repair function that automatically fixes invalid escape sequences (such as backslashes followed by newlines or unescaped Windows paths) and falls back to regex-based parsing if needed, ensuring 100% data extraction.
 - **Detailed Grouping**: Groups tools by their MCP server/block and calculates description and full JSON sizes (in characters and KB).
+
+### ⚡ 6. Active Parallelism & Load Balancing
+- **Configurable Parallel Channels**: Supports running 1 to 7 parallel channels with numeric delay entry, load-balancing requests across active slots.
+- **Deterministic Key Distribution**: Maps active channels to different API keys from the pool, ensuring that parallel channels use different keys and avoid concurrent request limits.
+- **Automatic Slot Rotation**: Automatically rotates failed slots to backup channels if errors occur.
+
+### 🧹 7. Context Compactor & Interception
+- **Automatic Context Compaction**: Runs an active compactor (`proxy_core/compactor.py`) that intercepts and rewrites tool responses to minimize context tokens.
+- **Deduplication & Schema Compaction**: Strips duplicate system instructions, repetitive skill blocks, and dynamically compacts MCP tool descriptions to their bare minimum required schema.
+- **Surgical Reading Guardrail**: Automatically blocks generic `read` calls on code or structured files, forcing the use of token-efficient `smart_read` outline/signatures modes.
+
+### 🇷🇺 8. Cyrillic Output & Russian Windows Compatibility
+- **UTF-8 Transcoding**: Configures all PowerShell and cmd output captures to set console encoding to UTF-8 and decode using UTF-8 with fallback, ensuring 100% compatibility with Russian Windows system language.
 
 ---
 
