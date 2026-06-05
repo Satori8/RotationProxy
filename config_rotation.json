@@ -1,24 +1,44 @@
 {
-  "last_fallback_switch_time": 0.0,
+  "last_fallback_switch_time": 1780533778.2173328,
   "model_cooldowns": {},
   "consecutive_model_failures": {},
   "rotation_lists": {
     "gemini-3.5-flash": [
       "gemini-3.5-flash",
-      "deepseek/deepseek-r1:free",
-      "qwen/qwen-2.5-72b-instruct:free",
+      "gemini-3-flash-preview",
+      "openrouter/owl-alpha",
+      "deepseek/deepseek-v4-flash:free",
       "meta-llama/llama-3.3-70b-instruct:free",
-      "deepseek/deepseek-chat:free"
+      "qwen/qwen3-coder:free",
+      "moonshotai/kimi-k2.6:free"
     ],
     "gemini-flash-lite-latest": [
       "gemini-flash-lite-latest",
-      "deepseek-v4-flash-free",
-      "mimo-v2.5-free",
-      "nemotron-3-super-free",
-      "google/gemini-2.5-flash:free",
-      "google/gemma-2-9b-it:free",
-      "meta-llama/llama-3.1-8b-instruct:free",
-      "qwen/qwen-2.5-coder-32b-instruct:free"
+      "deepseek/deepseek-v4-flash:free",
+      "liquid/lfm-2.5-1.2b-thinking:free",
+      "liquid/lfm-2.5-1.2b-instruct:free",
+      "nvidia/nemotron-nano-9b-v2:free",
+      "z-ai/glm-4.5-air:free",
+      "meta-llama/llama-3.2-3b-instruct:free",
+      "qwen/qwen3-coder:free"
     ]
-  }
+  },
+  "use_kaggle": false,
+  "force_model": {
+    "gemini-3.5-flash": "auto",
+    "gemini-flash-lite-latest": "auto"
+  },
+  "save_chat_logs": true,
+  "vpn_switching_mode": "error_threshold",
+  "vpn_static_channel": 0,
+  "vpn_errors_threshold": 3,
+  "key_cooldown_duration": 90,
+  "vpn_disabled_pause_sleep": 65.0,
+  "max_exponential_sleep": 65.0,
+  "parallelism_enabled": true,
+  "parallel_tunnels_count": 3,
+  "per_channel_delay": 0.5,
+  "filter_context": true,
+  "connect_timeout": 15.0,
+  "read_timeout": 120.0
 }

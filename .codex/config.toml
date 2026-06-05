@@ -1,0 +1,10 @@
+[mcp_servers.devctx]
+enabled = true
+required = false
+command = "C:\\Program Files\\nodejs\\node.exe"
+args = ["e:\\Appdata\\Roaming\\npm\\node_modules\\smart-context-mcp\\src\\mcp-server.js"]
+env = {
+  "DEVCTX_PROJECT_ROOT" = "D:\\Work\\Active\\GeminiProxy"
+}
+startup_timeout_sec = 15.0
+tool_timeout_sec = 30.0

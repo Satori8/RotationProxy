@@ -53,7 +53,7 @@ def save_kaggle_url(new_url: str) -> bool:
 def load_rotation_config() -> dict:
     target_gemini_35_list = [
         "gemini-3.5-flash",
-        "gemini-3-flash",
+        "gemini-3-flash-preview",
         "openrouter/owl-alpha",
         "deepseek/deepseek-v4-flash:free",
         "meta-llama/llama-3.3-70b-instruct:free",
@@ -117,6 +117,10 @@ def load_rotation_config() -> dict:
                 config["save_chat_logs"] = SAVE_CHAT_LOGS
                 needs_upgrade = True
 
+            if "filter_context" not in config:
+                config["filter_context"] = True
+                needs_upgrade = True
+
             # VPN Config Upgrade
             if "vpn_switching_mode" not in config:
                 config["vpn_switching_mode"] = "disabled"
@@ -126,6 +130,21 @@ def load_rotation_config() -> dict:
                 needs_upgrade = True
             if "vpn_errors_threshold" not in config:
                 config["vpn_errors_threshold"] = 5
+                needs_upgrade = True
+            if "key_cooldown_duration" not in config:
+                config["key_cooldown_duration"] = 90
+                needs_upgrade = True
+            if "vpn_disabled_pause_sleep" not in config:
+                config["vpn_disabled_pause_sleep"] = 65.0
+                needs_upgrade = True
+            if "max_exponential_sleep" not in config:
+                config["max_exponential_sleep"] = 65.0
+                needs_upgrade = True
+            if "connect_timeout" not in config:
+                config["connect_timeout"] = 15.0
+                needs_upgrade = True
+            if "read_timeout" not in config:
+                config["read_timeout"] = 120.0
                 needs_upgrade = True
 
             if needs_upgrade:
@@ -149,9 +168,15 @@ def load_rotation_config() -> dict:
         "use_kaggle": False,
         "force_model": {"gemini-3.5-flash": "auto", "gemini-flash-lite-latest": "auto"},
         "save_chat_logs": False,
+        "filter_context": True,
         "vpn_switching_mode": "disabled",
         "vpn_static_channel": 0,
         "vpn_errors_threshold": 5,
+        "key_cooldown_duration": 90,
+        "vpn_disabled_pause_sleep": 65.0,
+        "max_exponential_sleep": 65.0,
+        "connect_timeout": 15.0,
+        "read_timeout": 120.0,
     }
 
 

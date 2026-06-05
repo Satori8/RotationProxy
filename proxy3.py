@@ -30,6 +30,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.gui:
+        import os
+
+        os.environ["GEMINI_PROXY_PROCESS"] = "gui"
         # Load CustomTkinter dynamically to save start-up overhead if running CLI server
         import customtkinter as ctk
         from proxy_core.gui import ProxyGUI
@@ -41,6 +44,9 @@ if __name__ == "__main__":
 
         gui_app.mainloop()
     else:
+        import os
+
+        os.environ["GEMINI_PROXY_PROCESS"] = "server"
         import uvicorn
 
         # Run Foreground Server via Uvicorn

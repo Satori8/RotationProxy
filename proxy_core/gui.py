@@ -7,6 +7,7 @@ import subprocess
 import threading
 import re
 import datetime
+import tkinter as tk
 import customtkinter as ctk
 
 
@@ -56,6 +57,45 @@ def run_server_subprocess(host: str, port: int, reload: bool):
     )
 
 
+class CTkToolTip:
+    """A simple, lightweight hover tooltip for CustomTkinter widgets."""
+
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tooltip_window = None
+        self.widget.bind("<Enter>", self.show_tooltip)
+        self.widget.bind("<Leave>", self.hide_tooltip)
+
+    def show_tooltip(self, event=None):
+        if self.tooltip_window or not self.text:
+            return
+        x = self.widget.winfo_rootx() + 25
+        y = self.widget.winfo_rooty() + 20
+        self.tooltip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(
+            tw,
+            text=self.text,
+            justify="left",
+            background="#2c2c2c",
+            foreground="#ffffff",
+            relief="solid",
+            border=1,
+            font=("Helvetica", 10, "normal"),
+            padx=5,
+            pady=5,
+        )
+        label.pack(ipadx=1)
+
+    def hide_tooltip(self, event=None):
+        tw = self.tooltip_window
+        self.tooltip_window = None
+        if tw:
+            tw.destroy()
+
+
 class ProxyGUI(ctk.CTk):
     def __init__(self, host: str, port: int, reload: bool):
         super().__init__()
@@ -65,6 +105,9 @@ class ProxyGUI(ctk.CTk):
         self.server_process = None
         self.stdout_thread = None
         self.stderr_thread = None
+        self.restart_count = 0
+        self.restart_backoff = 1.0
+        self._restart_pending = False
 
         import sys
 
@@ -125,7 +168,7 @@ class ProxyGUI(ctk.CTk):
         thinking_models = [
             "Auto (Rotation)",
             "gemini-3.5-flash",
-            "gemini-3-flash",
+            "gemini-3-flash-preview",
             "openrouter/owl-alpha",
             "deepseek/deepseek-v4-flash:free",
             "deepseek/deepseek-r1:free",
@@ -190,21 +233,74 @@ class ProxyGUI(ctk.CTk):
             command=self.on_chat_log_toggle,
             font=ctk.CTkFont(size=12, weight="bold"),
         )
-        self.chat_log_checkbox.pack(anchor="w", padx=20, pady=(5, 10))
+        self.chat_log_checkbox.pack(anchor="w", padx=20, pady=(5, 5))
 
-        ctk.CTkLabel(
-            self.left_panel,
-            text="Kaggle Tunnel URL:",
-            font=ctk.CTkFont(size=11, weight="bold"),
-        ).pack(anchor="w", padx=20)
-        self.url_entry = ctk.CTkEntry(self.left_panel)
-        self.url_entry.insert(0, KAGGLE_BASE_URL)
-        self.url_entry.pack(fill="x", padx=20, pady=(2, 8))
-
-        self.save_url_btn = ctk.CTkButton(
-            self.left_panel, text="Save Kaggle URL", command=self.on_save_url
+        self.filter_context_var = ctk.BooleanVar(
+            value=config.get("filter_context", True)
         )
-        self.save_url_btn.pack(fill="x", padx=20, pady=(0, 10))
+        self.filter_context_checkbox = ctk.CTkCheckBox(
+            self.left_panel,
+            text="Filter context",
+            variable=self.filter_context_var,
+            command=self.on_filter_context_toggle,
+            font=ctk.CTkFont(size=12, weight="bold"),
+        )
+        self.filter_context_checkbox.pack(anchor="w", padx=20, pady=(5, 10))
+
+        # Parallelism Checkbox
+        self.parallelism_var = ctk.BooleanVar(value=False)
+        self.parallelism_cb = ctk.CTkCheckBox(
+            self.left_panel,
+            text="Enable Parallelism",
+            variable=self.parallelism_var,
+            command=self.on_save_parallelism_settings,
+            font=ctk.CTkFont(size=12, weight="bold"),
+        )
+        self.parallelism_cb.pack(anchor="w", padx=20, pady=(5, 5))
+
+        # Parallel Tunnels Count Frame
+        self.parallel_count_frame = ctk.CTkFrame(
+            self.left_panel, fg_color="transparent"
+        )
+        self.parallel_count_frame.pack(fill="x", padx=20, pady=5)
+
+        self.parallel_count_var = ctk.IntVar(value=3)
+        self.parallel_count_label = ctk.CTkLabel(
+            self.parallel_count_frame,
+            text="Parallel Tunnels:",
+            font=ctk.CTkFont(size=11, weight="bold"),
+        )
+        self.parallel_count_label.pack(side="left", padx=(0, 10))
+        self.parallel_count_dropdown = ctk.CTkOptionMenu(
+            self.parallel_count_frame,
+            values=[str(i) for i in range(1, 8)],
+            variable=self.parallel_count_var,
+            command=lambda _: self.on_save_parallelism_settings(),
+            width=80,
+        )
+        self.parallel_count_dropdown.pack(side="right", fill="x", expand=True)
+
+        # Per-Channel Delay Frame
+        self.per_channel_delay_frame = ctk.CTkFrame(
+            self.left_panel, fg_color="transparent"
+        )
+        self.per_channel_delay_frame.pack(fill="x", padx=20, pady=5)
+
+        self.per_channel_delay_label = ctk.CTkLabel(
+            self.per_channel_delay_frame,
+            text="Per-Channel Delay (sec):",
+            font=ctk.CTkFont(size=11, weight="bold"),
+        )
+        self.per_channel_delay_label.pack(side="left", padx=(0, 10))
+
+        self.per_channel_delay_entry = ctk.CTkEntry(
+            self.per_channel_delay_frame,
+            width=60,
+        )
+        self.per_channel_delay_entry.pack(side="right")
+        self.per_channel_delay_entry.bind(
+            "<KeyRelease>", lambda _: self.on_save_parallelism_settings()
+        )
 
         # Reset Daily Cooldowns Button
         self.reset_cooldowns_btn = ctk.CTkButton(
@@ -225,6 +321,26 @@ class ProxyGUI(ctk.CTk):
         )
         self.open_folder_btn.pack(fill="x", padx=20, pady=(10, 10))
 
+        # Compactor Statistics Frame
+        self.stats_frame = ctk.CTkFrame(self.left_panel, fg_color="transparent")
+        self.stats_frame.pack(fill="x", padx=20, pady=(5, 5))
+
+        self.stats_title = ctk.CTkLabel(
+            self.stats_frame,
+            text="CONTEXT COMPACTION:",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#3498DB",
+        )
+        self.stats_title.pack(anchor="w")
+
+        self.stats_label = ctk.CTkLabel(
+            self.stats_frame,
+            text="Saved: 0 B (-0.0%)",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="gray70",
+        )
+        self.stats_label.pack(anchor="w")
+
         self.right_panel = ctk.CTkFrame(self, corner_radius=10)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.right_panel.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
@@ -238,6 +354,7 @@ class ProxyGUI(ctk.CTk):
         self.tabview.add("Console Logs")
         self.tabview.add("Model Manager")
         self.tabview.add("VPN Manager")
+        self.tabview.add("Settings")
 
         # Tab 1: Console Logs
         self.tab_logs = self.tabview.tab("Console Logs")
@@ -275,15 +392,20 @@ class ProxyGUI(ctk.CTk):
         self.left_manager_frame.grid_columnconfigure(0, weight=1)
         self.left_manager_frame.grid_rowconfigure(2, weight=1)
 
-        ctk.CTkLabel(
+        # Provider selection dropdown
+        self.provider_var = ctk.StringVar(value="OpenRouter")
+        self.provider_dropdown = ctk.CTkOptionMenu(
             self.left_manager_frame,
-            text="OpenRouter Free Models",
-            font=ctk.CTkFont(size=14, weight="bold"),
-        ).grid(row=0, column=0, pady=(10, 5))
+            values=["OpenRouter", "Ollama", "LLM7", "Mistral"],
+            variable=self.provider_var,
+            command=self.on_provider_change,
+        )
+        self.provider_dropdown.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="ew")
 
+        # Fetch button
         self.fetch_btn = ctk.CTkButton(
             self.left_manager_frame,
-            text="Fetch Free Models",
+            text="Fetch Models",
             command=self.on_fetch_free_models,
         )
         self.fetch_btn.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
@@ -336,11 +458,27 @@ class ProxyGUI(ctk.CTk):
         self.active_rotation_list = []
         self.load_active_rotation_from_disk()
 
+        # Load parallelism settings
+        config = load_rotation_config()
+        self.parallelism_var.set(config.get("parallelism_enabled", False))
+        self.parallel_count_var.set(config.get("parallel_tunnels_count", 3))
+        self.per_channel_delay_entry.insert(
+            0, str(config.get("per_channel_delay", 0.5))
+        )
+
         # Tab 3: VPN Manager
         self.tab_vpn = self.tabview.tab("VPN Manager")
         self.tab_vpn.grid_columnconfigure(0, weight=1)
         self.tab_vpn.grid_columnconfigure(1, weight=1)
         self.tab_vpn.grid_rowconfigure(0, weight=1)
+
+        # Tab 4: Settings
+        self.tab_settings = self.tabview.tab("Settings")
+        self.tab_settings.grid_columnconfigure(0, weight=1)
+        self.tab_settings.grid_rowconfigure(0, weight=1)
+
+        # Load settings UI
+        self.load_settings_ui()
 
         # Left subframe: VPN Tunnel Controller
         self.vpn_control_frame = ctk.CTkFrame(self.tab_vpn, corner_radius=8)
@@ -353,13 +491,26 @@ class ProxyGUI(ctk.CTk):
             font=ctk.CTkFont(size=14, weight="bold"),
         ).grid(row=0, column=0, pady=(10, 10))
 
-        self.vpn_status_indicator = ctk.CTkLabel(
-            self.vpn_control_frame,
-            text="🔴 VPN Inactive",
-            text_color="#E74C3C",
-            font=ctk.CTkFont(size=16, weight="bold"),
+        # Create a grid frame for 6 channel indicators
+        self.channels_frame = ctk.CTkFrame(
+            self.vpn_control_frame, fg_color="transparent"
         )
-        self.vpn_status_indicator.grid(row=1, column=0, pady=(0, 20))
+        self.channels_frame.grid(row=1, column=0, pady=(0, 20))
+        self.channels_frame.grid_columnconfigure(0, weight=1)
+        self.channels_frame.grid_columnconfigure(1, weight=1)
+        self.channels_frame.grid_columnconfigure(2, weight=1)
+
+        # Initialize 6 channel status indicators
+        self.channel_indicators = {}
+        for i in range(1, 7):
+            label = ctk.CTkLabel(
+                self.channels_frame,
+                text=f"● VPN {i} Off",
+                text_color="#7F8C8D",
+                font=ctk.CTkFont(size=12),
+            )
+            label.grid(row=(i - 1) // 3, column=(i - 1) % 3, padx=5, pady=2, sticky="w")
+            self.channel_indicators[i] = label
 
         self.vpn_start_btn = ctk.CTkButton(
             self.vpn_control_frame,
@@ -378,6 +529,15 @@ class ProxyGUI(ctk.CTk):
             command=self.on_vpn_stop_tunnels,
         )
         self.vpn_stop_btn.grid(row=3, column=0, padx=20, pady=10, sticky="ew")
+
+        self.vpn_forward_btn = ctk.CTkButton(
+            self.vpn_control_frame,
+            text="Configure Forwarding",
+            fg_color="#2980B9",
+            hover_color="#3498DB",
+            command=self.on_vpn_configure_forwarding,
+        )
+        self.vpn_forward_btn.grid(row=4, column=0, padx=20, pady=10, sticky="ew")
 
         # Right subframe: VPN Rotation Settings
         self.vpn_config_frame = ctk.CTkFrame(self.tab_vpn, corner_radius=8)
@@ -421,6 +581,7 @@ class ProxyGUI(ctk.CTk):
         self.start_server_subprocess()
         self.poll_queue()
         self.check_subprocess_health()
+        self.poll_compactor_stats_loop()
 
     def on_thinking_select(self, val):
         config = load_rotation_config()
@@ -455,6 +616,13 @@ class ProxyGUI(ctk.CTk):
         config["save_chat_logs"] = val
         save_rotation_config(config)
         logger.info(f"Save Chat Logs set to: {val}")
+
+    def on_filter_context_toggle(self):
+        config = load_rotation_config()
+        val = self.filter_context_var.get()
+        config["filter_context"] = val
+        save_rotation_config(config)
+        logger.info(f"Filter context set to: {val}")
 
     def on_save_url(self):
         url = self.url_entry.get().strip()
@@ -505,6 +673,13 @@ class ProxyGUI(ctk.CTk):
     def on_clear_logs(self):
         self.log_textbox.delete("1.0", "end")
 
+    def on_provider_change(self, val):
+        logger.info(f"[GUI] Provider changed to: {val}")
+        log_queue.put(f"[GUI] Provider changed to: {val}")
+        for widget in self.models_scroll.winfo_children():
+            widget.destroy()
+        self.loaded_models_data.clear()
+
     def poll_queue(self):
         while not log_queue.empty():
             try:
@@ -531,6 +706,8 @@ class ProxyGUI(ctk.CTk):
 
     def start_server_subprocess(self):
         self.stop_server_subprocess()
+        # Kill any orphan process still holding our port
+        self._free_port(self.port)
         logger.info(f"Starting resilient server subprocess on port {self.port}...")
         log_queue.put(f"[GUI] Launching proxy server subprocess on port {self.port}...")
         self.server_process = run_server_subprocess(self.host, self.port, self.reload)
@@ -572,27 +749,99 @@ class ProxyGUI(ctk.CTk):
                     pass
             self.server_process = None
 
+    def _free_port(self, port: int):
+        """Kill any orphan process holding the given TCP port."""
+        try:
+            result = subprocess.run(
+                [
+                    "powershell",
+                    "-Command",
+                    f"Get-NetTCPConnection -LocalPort {port} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess",
+                ],
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=5.0,
+            )
+            if result.stdout and result.stdout.strip():
+                for pid in result.stdout.strip().splitlines():
+                    pid = pid.strip()
+                    if pid and pid.isdigit():
+                        subprocess.run(
+                            ["taskkill", "/F", "/PID", pid],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
+                        logger.info(
+                            f"[GUI] Killed orphan process PID {pid} holding port {port}."
+                        )
+        except Exception as e:
+            logger.debug(f"[GUI] Failed to free port {port}: {e}")
+
     def check_subprocess_health(self):
-        if self.server_process is not None:
+        """Monitor server subprocess health. Only schedules next check if process is alive."""
+        if self.server_process is not None and not self._restart_pending:
             ret_code = self.server_process.poll()
             if ret_code is not None:
+                # Read any remaining stderr from the dying process for diagnostics
+                stderr_debug = ""
+                try:
+                    remaining = self.server_process.stderr.read()
+                    if remaining:
+                        stderr_debug = remaining[-500:]
+                except Exception:
+                    pass
+
                 log_queue.put(
                     f"[GUI] [WARNING] Proxy server subprocess died with code {ret_code}."
                 )
+                if stderr_debug:
+                    log_queue.put(f"[GUI] [DEBUG] Last stderr: {stderr_debug}")
+
                 timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 ERROR_LOG_PATH = "proxy_errors.log"
                 try:
                     with open(ERROR_LOG_PATH, "a", encoding="utf-8") as f:
                         f.write(
-                            f"[{timestamp}] [ERROR] Proxy subprocess crashed/exited with code {ret_code}. Auto-restarting...\n"
+                            f"[{timestamp}] [ERROR] Proxy subprocess crashed/exited with code {ret_code}.\n"
                         )
+                        if stderr_debug:
+                            f.write(f"[{timestamp}] [STDERR] {stderr_debug}\n")
                 except Exception as e:
                     logger.error(f"Failed to write to proxy_errors.log: {e}")
 
+                self.restart_count += 1
+                if self.restart_count >= 10:
+                    log_queue.put(
+                        "[GUI] [CRITICAL] Proxy server crashed 10+ times. Giving up. Please check proxy_errors.log and fix the issue."
+                    )
+                    logger.error(
+                        f"Proxy server crashed {self.restart_count} times. Auto-restart disabled."
+                    )
+                    self.server_process = None
+                    return
+
+                delay = min(self.restart_backoff, 30.0)
                 log_queue.put(
-                    "[GUI] [SYSTEM] Initiating automatic subprocess recovery restart..."
+                    f"[GUI] [SYSTEM] Restarting in {delay:.0f}s (attempt #{self.restart_count}/10)..."
                 )
-                self.start_server_subprocess()
+                self.restart_backoff = min(self.restart_backoff * 2, 30.0)
+                self._restart_pending = True
+                self.server_process = None
+                # Don't schedule next health check — _do_restart will resume it
+                self.after(int(delay * 1000), self._do_restart)
+                return
+            else:
+                # Server is alive — reset backoff
+                self.restart_count = 0
+                self.restart_backoff = 1.0
+        # Schedule next check only when process is alive or no restart pending
+        self.after(1000, self.check_subprocess_health)
+
+    def _do_restart(self):
+        """Internal restart helper — starts process and resumes health check loop."""
+        self._restart_pending = False
+        self.start_server_subprocess()
         self.after(1000, self.check_subprocess_health)
 
     def on_close(self):
@@ -606,45 +855,316 @@ class ProxyGUI(ctk.CTk):
         self.destroy()
 
     def on_fetch_free_models(self):
-        """Asynchronously fetch free models in a background thread."""
+        """Asynchronously fetch models from selected provider in a background thread."""
         self.fetch_btn.configure(state="disabled", text="Fetching...")
+        provider = self.provider_var.get()
 
         def do_fetch():
             import urllib.request
 
-            url = "https://openrouter.ai/api/v1/models"
-            try:
-                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=8.0) as response:
-                    data = json.loads(response.read().decode("utf-8"))
-                    free_models = []
-                    for m in data.get("data", []):
-                        pricing = m.get("pricing", {})
-                        is_prompt_free = float(pricing.get("prompt", 0)) == 0.0
-                        is_completion_free = float(pricing.get("completion", 0)) == 0.0
-                        if is_prompt_free and is_completion_free:
-                            free_models.append(
+            if provider == "OpenRouter":
+                url = "https://openrouter.ai/api/v1/models"
+                try:
+                    req = urllib.request.Request(
+                        url, headers={"User-Agent": "Mozilla/5.0"}
+                    )
+                    with urllib.request.urlopen(req, timeout=8.0) as response:
+                        data = json.loads(response.read().decode("utf-8"))
+                        free_models = []
+                        for m in data.get("data", []):
+                            pricing = m.get("pricing", {})
+                            is_prompt_free = float(pricing.get("prompt", 0)) == 0.0
+                            is_completion_free = (
+                                float(pricing.get("completion", 0)) == 0.0
+                            )
+                            if is_prompt_free and is_completion_free:
+                                free_models.append(
+                                    {
+                                        "id": m.get("id"),
+                                        "name": m.get("name"),
+                                        "context_length": m.get(
+                                            "context_length", "unknown"
+                                        ),
+                                        "provider": "openrouter",
+                                    }
+                                )
+                        # Sort by id
+                        free_models = sorted(free_models, key=lambda x: x["id"])
+                        self.after(0, lambda: self.render_free_models(free_models))
+                except Exception as e:
+                    logger.error(f"[GUI] Failed to fetch OpenRouter models: {e}")
+                    self.after(
+                        0,
+                        lambda: self.fetch_btn.configure(
+                            state="normal", text="Fetch Models"
+                        ),
+                    )
+
+            elif provider == "Ollama":
+                url = "https://ollama.com/v1/models"
+                try:
+                    from proxy_core.rotation import OLLAMA_CLOUD_KEYS
+
+                    headers = {"User-Agent": "Mozilla/5.0"}
+                    if OLLAMA_CLOUD_KEYS:
+                        headers["Authorization"] = f"Bearer {OLLAMA_CLOUD_KEYS[0]}"
+                    req = urllib.request.Request(url, headers=headers)
+                    with urllib.request.urlopen(req, timeout=8.0) as response:
+                        data = json.loads(response.read().decode("utf-8"))
+                        models = []
+                        for m in data.get("data", []):
+                            models.append(
                                 {
                                     "id": m.get("id"),
-                                    "name": m.get("name"),
-                                    "context_length": m.get(
-                                        "context_length", "unknown"
-                                    ),
+                                    "name": m.get("id"),
+                                    "context_length": "unknown",
+                                    "provider": "ollama",
                                 }
                             )
-                    # Sort by id
-                    free_models = sorted(free_models, key=lambda x: x["id"])
-                    self.after(0, lambda: self.render_free_models(free_models))
-            except Exception as e:
-                logger.error(f"[GUI] Failed to fetch free models: {e}")
-                self.after(
-                    0,
-                    lambda: self.fetch_btn.configure(
-                        state="normal", text="Fetch Free Models"
-                    ),
-                )
+                        # Sort by id
+                        models = sorted(models, key=lambda x: x["id"])
+                        self.after(0, lambda: self.render_free_models(models))
+                except Exception as e:
+                    logger.error(f"[GUI] Failed to fetch Ollama models: {e}")
+                    self.after(
+                        0,
+                        lambda: self.fetch_btn.configure(
+                            state="normal", text="Fetch Models"
+                        ),
+                    )
+
+            elif provider == "LLM7":
+                url = "https://api.llm7.io/v1/models"
+                try:
+                    from proxy_core.rotation import LLM7_KEYS
+
+                    headers = {"User-Agent": "Mozilla/5.0"}
+                    if LLM7_KEYS:
+                        headers["Authorization"] = f"Bearer {LLM7_KEYS[0]}"
+                    req = urllib.request.Request(url, headers=headers)
+                    with urllib.request.urlopen(req, timeout=8.0) as response:
+                        data = json.loads(response.read().decode("utf-8"))
+                        models = []
+                        # Since LLM7 returns a list directly
+                        for m in data:
+                            ctx = m.get("context_window")
+                            if isinstance(ctx, dict):
+                                context_length = ctx.get("tokens", "unknown")
+                            else:
+                                context_length = ctx if ctx else "unknown"
+                            models.append(
+                                {
+                                    "id": m.get("id"),
+                                    "name": m.get("id"),
+                                    "context_length": context_length,
+                                    "provider": "llm7",
+                                }
+                            )
+                        # Sort by id
+                        models = sorted(models, key=lambda x: x["id"])
+                        self.after(0, lambda: self.render_free_models(models))
+                except Exception as e:
+                    logger.error(f"[GUI] Failed to fetch LLM7 models: {e}")
+                    self.after(
+                        0,
+                        lambda: self.fetch_btn.configure(
+                            state="normal", text="Fetch Models"
+                        ),
+                    )
+
+            elif provider == "Mistral":
+                url = "https://api.mistral.ai/v1/models"
+                try:
+                    from proxy_core.rotation import MISTRAL_KEYS
+
+                    headers = {"User-Agent": "Mozilla/5.0"}
+                    if MISTRAL_KEYS:
+                        headers["Authorization"] = f"Bearer {MISTRAL_KEYS[0]}"
+                    req = urllib.request.Request(url, headers=headers)
+                    with urllib.request.urlopen(req, timeout=8.0) as response:
+                        data = json.loads(response.read().decode("utf-8"))
+                        models = []
+                        for m in data.get("data", []):
+                            models.append(
+                                {
+                                    "id": m.get("id"),
+                                    "name": m.get("id"),
+                                    "context_length": "unknown",
+                                    "provider": "mistral",
+                                }
+                            )
+                        # Sort by id
+                        models = sorted(models, key=lambda x: x["id"])
+                        self.after(0, lambda: self.render_free_models(models))
+                except Exception as e:
+                    logger.error(f"[GUI] Failed to fetch Mistral models: {e}")
+                    self.after(
+                        0,
+                        lambda: self.fetch_btn.configure(
+                            state="normal", text="Fetch Models"
+                        ),
+                    )
 
         threading.Thread(target=do_fetch, daemon=True).start()
+
+    def load_settings_ui(self):
+        """Load and render the Settings tab UI."""
+        config = load_rotation_config()
+
+        # Main settings frame
+        settings_frame = ctk.CTkFrame(self.tab_settings, corner_radius=8)
+        settings_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        settings_frame.grid_columnconfigure(0, weight=1)
+        settings_frame.grid_columnconfigure(1, weight=1)
+
+        # Key Cooldown Duration
+        ctk.CTkLabel(
+            settings_frame,
+            text="Key Cooldown Duration (seconds):",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).grid(row=0, column=0, padx=10, pady=(10, 2), sticky="w")
+
+        self.cooldown_entry = ctk.CTkEntry(settings_frame)
+        self.cooldown_entry.insert(0, str(config.get("key_cooldown_duration", 90)))
+        self.cooldown_entry.grid(row=1, column=0, padx=10, pady=(0, 10), sticky="ew")
+
+        # Connect Timeout (Column 1)
+        connect_label = ctk.CTkLabel(
+            settings_frame,
+            text="Connect Timeout (seconds):",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        )
+        connect_label.grid(row=0, column=1, padx=10, pady=(10, 2), sticky="w")
+        self.connect_timeout_entry = ctk.CTkEntry(settings_frame)
+        self.connect_timeout_entry.insert(0, str(config.get("connect_timeout", 15.0)))
+        self.connect_timeout_entry.grid(
+            row=1, column=1, padx=10, pady=(0, 10), sticky="ew"
+        )
+
+        CTkToolTip(
+            connect_label,
+            "Тайм-аут установки TCP-соединения с сервером.\nРекомендуется: 10-15 сек.",
+        )
+        CTkToolTip(
+            self.connect_timeout_entry,
+            "Тайм-аут установки TCP-соединения с сервером.\nРекомендуется: 10-15 сек.",
+        )
+
+        # VPN Disabled Pause Sleep
+        ctk.CTkLabel(
+            settings_frame,
+            text="VPN Disabled Pause Sleep (seconds):",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).grid(row=2, column=0, padx=10, pady=(10, 2), sticky="w")
+
+        self.pause_sleep_entry = ctk.CTkEntry(settings_frame)
+        self.pause_sleep_entry.insert(
+            0, str(config.get("vpn_disabled_pause_sleep", 65.0))
+        )
+        self.pause_sleep_entry.grid(row=3, column=0, padx=10, pady=(0, 10), sticky="ew")
+
+        # Read Timeout (Column 1)
+        read_label = ctk.CTkLabel(
+            settings_frame,
+            text="Read Timeout (seconds):",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        )
+        read_label.grid(row=2, column=1, padx=10, pady=(10, 2), sticky="w")
+        self.read_timeout_entry = ctk.CTkEntry(settings_frame)
+        self.read_timeout_entry.insert(0, str(config.get("read_timeout", 120.0)))
+        self.read_timeout_entry.grid(
+            row=3, column=1, padx=10, pady=(0, 10), sticky="ew"
+        )
+
+        CTkToolTip(
+            read_label,
+            "Тайм-аут ожидания ответа/чанка от модели.\nУвеличьте для медленных моделей с большим контекстом.\nРекомендуется: 60-180 сек.",
+        )
+        CTkToolTip(
+            self.read_timeout_entry,
+            "Тайм-аут ожидания ответа/чанка от модели.\nУвеличьте для медленных моделей с большим контекстом.\nРекомендуется: 60-180 сек.",
+        )
+
+        # Max Exponential Sleep
+        ctk.CTkLabel(
+            settings_frame,
+            text="Max Exponential Sleep (seconds):",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).grid(row=4, column=0, padx=10, pady=(10, 2), sticky="w")
+
+        self.max_sleep_entry = ctk.CTkEntry(settings_frame)
+        self.max_sleep_entry.insert(0, str(config.get("max_exponential_sleep", 65.0)))
+        self.max_sleep_entry.grid(row=5, column=0, padx=10, pady=(0, 10), sticky="ew")
+
+        # Save Settings Button
+        self.save_settings_btn = ctk.CTkButton(
+            settings_frame,
+            text="Save Settings",
+            fg_color="#27AE60",
+            hover_color="#2ECC71",
+            command=self.on_save_settings,
+        )
+        self.save_settings_btn.grid(row=6, column=0, padx=10, pady=20, sticky="ew")
+
+        # Global Reset Button (prominent and red)
+        self.global_reset_btn = ctk.CTkButton(
+            settings_frame,
+            text="⚠️ GLOBAL SYSTEM RESET ⚠️",
+            fg_color="#C0392B",
+            hover_color="#E74C3C",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=self.on_global_reset,
+        )
+        self.global_reset_btn.grid(row=7, column=0, padx=10, pady=10, sticky="ew")
+
+    def on_save_settings(self):
+        """Save the settings to config_rotation.json."""
+        try:
+            config = load_rotation_config()
+
+            # Update settings from entry fields
+            config["key_cooldown_duration"] = float(self.cooldown_entry.get())
+            config["vpn_disabled_pause_sleep"] = float(self.pause_sleep_entry.get())
+            config["max_exponential_sleep"] = float(self.max_sleep_entry.get())
+            config["connect_timeout"] = float(self.connect_timeout_entry.get())
+            config["read_timeout"] = float(self.read_timeout_entry.get())
+
+            save_rotation_config(config)
+            logger.info("[GUI] Settings saved successfully.")
+            log_queue.put("[GUI] Settings saved successfully.")
+        except Exception as e:
+            logger.error(f"[GUI] Failed to save settings: {e}")
+            log_queue.put(f"[GUI] [ERROR] Failed to save settings: {e}")
+
+    def on_global_reset(self):
+        """Trigger a global system reset via the new endpoint."""
+        import httpx
+        import threading
+
+        def do_global_reset():
+            url = f"http://{self.host}:{self.port}/control/global_reset"
+            try:
+                r = httpx.post(url, timeout=5.0)
+                if r.status_code == 200:
+                    logger.info("[GUI] Global reset completed successfully.")
+                    log_queue.put("[GUI] Global reset completed successfully.")
+                else:
+                    logger.error(f"[GUI] Global reset failed: HTTP {r.status_code}")
+                    log_queue.put(
+                        f"[GUI] [ERROR] Global reset failed: HTTP {r.status_code}"
+                    )
+            except Exception as ex:
+                logger.error(f"[GUI] Failed to connect for global reset: {ex}")
+                log_queue.put(f"[GUI] [ERROR] Failed to connect for global reset: {ex}")
+
+        self.global_reset_btn.configure(state="disabled", text="Resetting...")
+        threading.Thread(target=do_global_reset, daemon=True).start()
+        self.after(
+            2000,
+            lambda: self.global_reset_btn.configure(
+                state="normal", text="⚠️ GLOBAL SYSTEM RESET ⚠️"
+            ),
+        )
 
     def render_free_models(self, models):
         """Render list of models in the scrollable frame."""
@@ -658,8 +1178,8 @@ class ProxyGUI(ctk.CTk):
             row_frame.grid(row=idx, column=0, padx=2, pady=4, sticky="ew")
             row_frame.grid_columnconfigure(0, weight=1)
 
-            # Info text (ID and context)
-            info_text = f"{m['name']}\n({m['id']})\nCtx: {m['context_length']}"
+            # Info text (ID, provider and context)
+            info_text = f"{m['name']}\n({m['id']})\nProv: {m.get('provider', 'unknown')}\nCtx: {m['context_length']}"
             lbl = ctk.CTkLabel(
                 row_frame, text=info_text, font=ctk.CTkFont(size=10), justify="left"
             )
@@ -672,8 +1192,9 @@ class ProxyGUI(ctk.CTk):
             badge.grid(row=0, column=1, padx=5)
 
             # Test Button
-            test_cb = lambda model_id=m["id"], b=badge: self.on_test_individual_model(
-                model_id, b
+            provider = m.get("provider", "openrouter")
+            test_cb = lambda model_id=m["id"], b=badge, p=provider: (
+                self.on_test_individual_model(model_id, b, p)
             )
             btn_test = ctk.CTkButton(
                 row_frame,
@@ -686,7 +1207,9 @@ class ProxyGUI(ctk.CTk):
             btn_test.grid(row=0, column=2, padx=2)
 
             # Add to Rotation Button
-            add_cb = lambda model_id=m["id"]: self.on_add_model_to_rotation(model_id)
+            add_cb = lambda model_id=m["id"], p=m.get("provider", "openrouter"): (
+                self.on_add_model_to_rotation(model_id, p)
+            )
             btn_add = ctk.CTkButton(
                 row_frame,
                 text="+ Add",
@@ -699,9 +1222,9 @@ class ProxyGUI(ctk.CTk):
             )
             btn_add.grid(row=0, column=3, padx=2)
 
-        self.fetch_btn.configure(state="normal", text="Fetch Free Models")
+        self.fetch_btn.configure(state="normal", text="Fetch Models")
 
-    def on_test_individual_model(self, model_id, badge_widget):
+    def on_test_individual_model(self, model_id, badge_widget, provider):
         """Test a model via background thread and update its status indicator badge and response latency."""
         badge_widget.configure(
             text_color="#F1C40F", text="● ..."
@@ -714,7 +1237,7 @@ class ProxyGUI(ctk.CTk):
             try:
                 r = httpx.post(
                     url,
-                    json={"model": model_id, "provider": "openrouter"},
+                    json={"model": model_id, "provider": provider},
                     timeout=12.0,
                 )
                 if r.status_code == 200:
@@ -791,16 +1314,20 @@ class ProxyGUI(ctk.CTk):
             f"[GUI] Switched manager domain selection to: {self.active_domain_key}"
         )
 
-    def on_add_model_to_rotation(self, model_id):
-        """Add a model from scan to the end of the active domain's rotation list."""
-        if model_id not in self.active_rotation_list:
-            self.active_rotation_list.append(model_id)
+    def on_add_model_to_rotation(self, model_id, provider=None):
+        """Add a model from scan to the end of the active domain's rotation list, with provider prefix."""
+        prefixed_model_id = model_id
+        if provider and provider != "gemini":
+            prefixed_model_id = f"{provider}/{model_id}"
+
+        if prefixed_model_id not in self.active_rotation_list:
+            self.active_rotation_list.append(prefixed_model_id)
             self.render_rotation_list()
             logger.info(
-                f"[GUI] Added model '{model_id}' to current {self.active_domain_key} rotation configuration."
+                f"[GUI] Added model '{prefixed_model_id}' to current {self.active_domain_key} rotation configuration."
             )
             log_queue.put(
-                f"[GUI] Added model '{model_id}' to current {self.active_domain_key} rotation configuration."
+                f"[GUI] Added model '{prefixed_model_id}' to current {self.active_domain_key} rotation configuration."
             )
 
     def load_active_rotation_from_disk(self):
@@ -811,8 +1338,26 @@ class ProxyGUI(ctk.CTk):
         )
         self.render_rotation_list()
 
+    def on_save_parallelism_settings(self):
+        config = load_rotation_config()
+        config["parallelism_enabled"] = self.parallelism_var.get()
+        config["parallel_tunnels_count"] = int(self.parallel_count_var.get())
+
+        # Parse delay entry safely
+        try:
+            delay_val = float(self.per_channel_delay_entry.get())
+            if delay_val < 0.0:
+                delay_val = 0.0
+            config["per_channel_delay"] = delay_val
+        except ValueError:
+            # Fallback to current config value or 0.5 if invalid
+            config["per_channel_delay"] = config.get("per_channel_delay", 0.5)
+
+        save_rotation_config(config)
+        log_queue.put("[GUI] Parallelism settings saved.")
+
     def render_rotation_list(self):
-        """Render the ordered rotation models in the configurator frame."""
+        """Render the ordered rotation models in the configurator frame with status badges and test buttons."""
         for widget in self.rotation_scroll.winfo_children():
             widget.destroy()
 
@@ -827,6 +1372,50 @@ class ProxyGUI(ctk.CTk):
             )
             lbl.grid(row=0, column=0, padx=5, pady=2, sticky="w")
 
+            # Status Badge (circle indicator)
+            badge = ctk.CTkLabel(
+                row_frame,
+                text="●",
+                text_color="#7F8C8D",
+                font=ctk.CTkFont(size=14, weight="bold"),
+            )
+            badge.grid(row=0, column=1, padx=5)
+
+            # Test Button
+            # Determine provider and clean model ID from the rotation string
+            provider = "gemini"
+            clean_model_id = model_id
+            for p in [
+                "openrouter",
+                "ollama",
+                "llm7",
+                "mistral",
+                "gemini",
+                "ollama_cloud",
+            ]:
+                if model_id.startswith(f"{p}/"):
+                    provider = p
+                    clean_model_id = model_id[len(p) + 1 :]
+                    break
+            else:
+                if "/" in model_id or model_id.endswith(":free"):
+                    provider = "openrouter"
+                elif model_id.startswith("llm7-") or model_id.startswith("qwen3-"):
+                    provider = "llm7"
+
+            test_cb = lambda m=clean_model_id, b=badge, p=provider: (
+                self.on_test_individual_model(m, b, p)
+            )
+            btn_test = ctk.CTkButton(
+                row_frame,
+                text="Test",
+                width=40,
+                height=18,
+                font=ctk.CTkFont(size=8, weight="bold"),
+                command=test_cb,
+            )
+            btn_test.grid(row=0, column=2, padx=2)
+
             # Check core boundaries (don't allow removing protected first element)
             if model_id != protected_id:
                 # Up button
@@ -839,7 +1428,7 @@ class ProxyGUI(ctk.CTk):
                     font=ctk.CTkFont(size=8),
                     command=up_cb,
                 )
-                btn_up.grid(row=0, column=1, padx=1)
+                btn_up.grid(row=0, column=3, padx=1)
 
                 # Down button
                 down_cb = lambda i=idx: self.on_shift_model_priority(i, direction=1)
@@ -851,7 +1440,7 @@ class ProxyGUI(ctk.CTk):
                     font=ctk.CTkFont(size=8),
                     command=down_cb,
                 )
-                btn_down.grid(row=0, column=2, padx=1)
+                btn_down.grid(row=0, column=4, padx=1)
 
                 # Remove button
                 del_cb = lambda m=model_id: self.on_remove_model_from_rotation(m)
@@ -866,7 +1455,7 @@ class ProxyGUI(ctk.CTk):
                     hover_color="#2c2c2c",
                     command=del_cb,
                 )
-                btn_del.grid(row=0, column=3, padx=1)
+                btn_del.grid(row=0, column=5, padx=1)
 
     def on_shift_model_priority(self, index, direction):
         """Shift model priority up (-1) or down (+1) in the rotation list."""
@@ -935,11 +1524,60 @@ class ProxyGUI(ctk.CTk):
         )
 
         def run_start():
+            import threading
+            from proxy_core.rotation import wait_for_adapter_and_add_route
+
             try:
-                self.vpn_manager.install_and_start_all_services()
+                self.vpn_manager.uninstall_all_services(print_cb=log_queue.put)
                 log_queue.put(
-                    "[GUI] [SUCCESS] All 6 WireGuard tunnels started and gateway routes configured!"
+                    "[GUI] [SYSTEM] Installing and starting all 6 VPN tunnels in parallel..."
                 )
+
+                def start_single_tunnel(i):
+                    name = f"vpn{i}"
+                    conf_path = os.path.join(
+                        self.vpn_manager.configs_dir, f"{name}.conf"
+                    )
+                    if os.path.exists(conf_path):
+                        # Install service
+                        subprocess.run(
+                            [
+                                self.vpn_manager.wg_path,
+                                "/installtunnelservice",
+                                conf_path,
+                            ],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
+                        log_queue.put(
+                            f"[GUI] [SYSTEM] Service vpn{i} started. Waiting for adapter..."
+                        )
+
+                        # Wait for adapter and add route
+                        if wait_for_adapter_and_add_route(i, timeout=25.0):
+                            log_queue.put(
+                                f"[GUI] [SUCCESS] VPN {i} is fully ready and routed!"
+                            )
+                        else:
+                            log_queue.put(
+                                f"[GUI] [WARNING] VPN {i} failed to initialize route within timeout."
+                            )
+                    else:
+                        log_queue.put(f"[GUI] [ERROR] Config not found for vpn{i}")
+
+                threads = []
+                for i in range(1, 7):
+                    t = threading.Thread(
+                        target=start_single_tunnel, args=(i,), daemon=True
+                    )
+                    t.start()
+                    threads.append(t)
+
+                # Wait for all threads to complete
+                for t in threads:
+                    t.join()
+
+                log_queue.put("[GUI] [SUCCESS] Parallel VPN startup completed!")
             except Exception as e:
                 logger.error(f"[GUI] Error starting tunnels: {e}")
                 log_queue.put(f"[GUI] [ERROR] Error starting tunnels: {e}")
@@ -953,6 +1591,77 @@ class ProxyGUI(ctk.CTk):
                 self.after(0, self.do_poll_vpn_status)
 
         threading.Thread(target=run_start, daemon=True).start()
+
+    def on_vpn_configure_forwarding(self):
+        """Manually execute the forward tunnel routing script in a background thread."""
+        if not hasattr(self, "vpn_manager") or self.vpn_manager is None:
+            log_queue.put("[GUI] [ERROR] VPN Manager library is not loaded.")
+            return
+
+        if not self.vpn_manager.is_admin():
+            logger.info(
+                "[GUI] Requesting Windows Administrator privileges to run forwarding setup..."
+            )
+            log_queue.put(
+                "[GUI] [SYSTEM] WireGuard requires Administrator privileges. Requesting UAC elevation..."
+            )
+            self.vpn_manager.elevate()
+            return
+
+        self.vpn_forward_btn.configure(state="disabled", text="Configuring...")
+        log_queue.put(
+            "[GUI] [SYSTEM] Manually configuring forward tunnel routes via forawrd_tunnels.ps1..."
+        )
+
+        def run_manual_forward():
+            try:
+                script_path = (
+                    r"D:\Work\Active\server-services\vpn_switcher\forawrd_tunnels.ps1"
+                )
+                result = subprocess.run(
+                    [
+                        "powershell",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        script_path,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    errors="replace",
+                    timeout=30.0,
+                )
+                if result.stdout and result.stdout.strip():
+                    for line in result.stdout.strip().splitlines():
+                        log_queue.put(f"[PS1] {line}")
+                if result.stderr and result.stderr.strip():
+                    logger.warning(f"[PS1] Stderr: {result.stderr.strip()[-300:]}")
+                if result.returncode == 0:
+                    log_queue.put(
+                        "[GUI] [SUCCESS] Forward tunnel routes configured successfully."
+                    )
+                else:
+                    log_queue.put(
+                        f"[GUI] [WARNING] forawrd_tunnels.ps1 exited with code {result.returncode}."
+                    )
+            except subprocess.TimeoutExpired:
+                log_queue.put(
+                    "[GUI] [WARNING] forawrd_tunnels.ps1 timed out after 30s."
+                )
+            except Exception as e:
+                logger.error(f"[GUI] Error running forawrd_tunnels.ps1: {e}")
+                log_queue.put(
+                    f"[GUI] [ERROR] Failed to configure forward tunnel routes: {e}"
+                )
+            finally:
+                self.after(
+                    0,
+                    lambda: self.vpn_forward_btn.configure(
+                        state="normal", text="Configure Forwarding"
+                    ),
+                )
+
+        threading.Thread(target=run_manual_forward, daemon=True).start()
 
     def on_vpn_stop_tunnels(self):
         """Stop and cleanly uninstall all 6 WireGuard tunnels in a background thread."""
@@ -975,8 +1684,8 @@ class ProxyGUI(ctk.CTk):
 
         def run_stop():
             try:
-                self.vpn_manager.uninstall_all_services()
-                self.vpn_manager.disable_system_routing()
+                self.vpn_manager.uninstall_all_services(print_cb=log_queue.put)
+                self.vpn_manager.disable_system_routing(print_cb=log_queue.put)
                 log_queue.put(
                     "[GUI] [SUCCESS] All WireGuard tunnels removed. System routing restored to default."
                 )
@@ -995,32 +1704,118 @@ class ProxyGUI(ctk.CTk):
         threading.Thread(target=run_stop, daemon=True).start()
 
     def poll_vpn_status_loop(self):
-        """Periodic loop to poll the status of VPN tunnels every 5 seconds."""
+        """Periodic loop to poll the status of VPN tunnels every 15 seconds."""
         self.do_poll_vpn_status()
-        self.after(5000, self.poll_vpn_status_loop)
+        self.after(15000, self.poll_vpn_status_loop)
+
+    def poll_compactor_stats_loop(self):
+        """Periodic loop to poll compactor statistics from state and update UI."""
+        from proxy_core import state
+
+        orig = getattr(state, "COMPACTOR_ORIG_BYTES", 0)
+        comp = getattr(state, "COMPACTOR_COMP_BYTES", 0)
+        saved = orig - comp
+        pct = (saved / orig) * 100 if orig > 0 else 0.0
+
+        def format_size(size_bytes):
+            if size_bytes < 1024:
+                return f"{size_bytes} B"
+            elif size_bytes < 1024 * 1024:
+                return f"{size_bytes / 1024:.1f} KB"
+            else:
+                return f"{size_bytes / (1024 * 1024):.2f} MB"
+
+        self.stats_label.configure(text=f"Saved: {format_size(saved)} (-{pct:.1f}%)")
+        self.after(2000, self.poll_compactor_stats_loop)
 
     def do_poll_vpn_status(self):
-        """Run is_any_tunnel_active on a background thread to prevent UI lag."""
+        """Run parallel ping checks for active VPN channels to measure latency and service state."""
         if not hasattr(self, "vpn_manager") or self.vpn_manager is None:
             return
 
         def run_check():
             try:
-                active = self.vpn_manager.is_any_tunnel_active()
-                if active:
-                    self.after(
-                        0,
-                        lambda: self.vpn_status_indicator.configure(
-                            text="🟢 VPN Active", text_color="#2ECC71"
-                        ),
+                import httpx
+                import threading
+                import subprocess
+
+                # Check service status using PowerShell command
+                running_channels = set()
+                try:
+                    result = subprocess.run(
+                        [
+                            "powershell",
+                            "-Command",
+                            "Get-Service -Name WireGuardTunnel$* | Select-Object -Property Name, Status",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        errors="replace",
+                        timeout=5.0,
                     )
-                else:
-                    self.after(
-                        0,
-                        lambda: self.vpn_status_indicator.configure(
-                            text="🔴 VPN Inactive", text_color="#E74C3C"
-                        ),
-                    )
+                    if result.returncode == 0 and result.stdout:
+                        for line in result.stdout.splitlines():
+                            if "Running" in line:
+                                for idx in range(1, 7):
+                                    if f"WireGuardTunnel$vpn{idx}" in line:
+                                        running_channels.add(idx)
+                except Exception as se:
+                    logger.debug(f"[VPN Service Check Error] {se}")
+                    # If check fails, assume all are running to fall back to ping checks
+                    running_channels = set(range(1, 7))
+
+                results = {}
+                threads = []
+
+                def ping_channel(channel):
+                    if channel not in running_channels:
+                        results[channel] = {"status": "off", "latency": None}
+                        return
+
+                    local_ip = f"10.8.0.1{channel}"
+                    url = "https://api.ipify.org"
+                    try:
+                        transport = httpx.HTTPTransport(local_address=local_ip)
+                        with httpx.Client(transport=transport, timeout=2.0) as client:
+                            start = time.perf_counter()
+                            resp = client.get(url)
+                            latency_ms = int((time.perf_counter() - start) * 1000)
+                            results[channel] = {
+                                "status": "running",
+                                "latency": latency_ms,
+                            }
+                    except Exception:
+                        results[channel] = {"status": "offline", "latency": None}
+
+                # Start threads for all 6 channels
+                for i in range(1, 7):
+                    t = threading.Thread(target=ping_channel, args=(i,), daemon=True)
+                    threads.append(t)
+                    t.start()
+
+                # Wait for all threads
+                for t in threads:
+                    t.join()
+
+                # Update UI on main thread
+                def update_ui():
+                    for i in range(1, 7):
+                        data = results.get(i, {"status": "off", "latency": None})
+                        status = data["status"]
+                        if status == "off":
+                            self.channel_indicators[i].configure(
+                                text="● Off", text_color="#7F8C8D"
+                            )
+                        elif status == "offline":
+                            self.channel_indicators[i].configure(
+                                text="● Offline", text_color="#E74C3C"
+                            )
+                        else:
+                            self.channel_indicators[i].configure(
+                                text=f"● {data['latency']}ms", text_color="#2ECC71"
+                            )
+
+                self.after(0, update_ui)
             except Exception as e:
                 logger.debug(f"[VPN Status Check Error] {e}")
 

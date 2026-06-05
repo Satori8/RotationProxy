@@ -31,6 +31,12 @@ A resilient, high-performance API key, model, and isolated VPN rotation proxy de
 - **Graceful Stream Termination**: Catches and logs upstream read errors (`httpx.ReadError`, `httpcore.ReadError`) gracefully during streaming, preventing ASGI crashes and stack traces from prematurely aborted client connections.
 - **UTF-8 Subprocess Stream Encoding**: Forces all subprocess streams to use UTF-8 (`PYTHONIOENCODING=utf-8`), resolving Windows-specific encoding conflicts and preventing corrupted characters (mojibake) in GUI logs.
 
+### 📊 5. MCP Tools & Usage Analyzer
+- **History-Aware Analysis**: A highly robust analysis script `tools/analyze_mcp_tools.py` recursively scans all chat logs (`*_request.txt` and `*_response.txt` files) across all session subdirectories.
+- **Accurate Call Counting**: Uses a smart deduplication algorithm to count the exact number of times each tool was called in `functionCall` blocks across the entire history, with zero double-counting.
+- **JSON Repair & Fallback**: Features a robust JSON repair function that automatically fixes invalid escape sequences (such as backslashes followed by newlines or unescaped Windows paths) and falls back to regex-based parsing if needed, ensuring 100% data extraction.
+- **Detailed Grouping**: Groups tools by their MCP server/block and calculates description and full JSON sizes (in characters and KB).
+
 ---
 
 ## 📂 Project Structure
@@ -40,16 +46,23 @@ GeminiProxy/
 ├── proxy3.py             # Unified proxy server and GUI controller
 ├── proxy_core/
 │   ├── __init__.py
+│   ├── compactor.py      # Context compactor and tool response interceptor
 │   ├── config.py         # Schema upgrades, path resolutions, and configuration
 │   ├── gui.py            # CTkTabview GUI, multithreaded VPN & model manager, live logs
 │   ├── logger.py         # Console and file logger configurations
 │   ├── rotation.py       # API key loader and cooldown scheduler
 │   ├── server.py         # FastAPI ASGI server, socket routing, 429 handlers, payload translations
 │   └── state.py          # Shared cross-module thread-safe states and queues
+├── tools/                # Auxiliary scripts, reports, and analysis tools (git-ignored)
+│   ├── analyze_mcp_tools.py # MCP tools declarations and call frequencies analyzer
+│   ├── analyze_duplicates.py # Duplicate detection and text state machine
+│   ├── analyze_logs.py   # Chat logs parser and metadata filter
+│   ├── analyze_session_context.py # Session context and request file analyzer
+│   └── strip_conversation.py # Conversational text stripper from request JSON
 ├── config_rotation.json  # Model rotation lists and dynamic settings
 ├── launch_gui.cmd        # One-click Windows launcher using uv
 ├── app.ico               # GUI Window application icon
-├── .gitignore            # Git exclusion rules for caches, keys, and logs
+├── .gitignore            # Git exclusion rules for caches, keys, logs, and tools
 └── docs/                 # Detailed implementation plans and architectural designs
 ```
 

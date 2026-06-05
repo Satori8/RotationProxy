@@ -34,9 +34,13 @@ from proxy_core.rotation import (
     OPENROUTER_KEYS,
     MISTRAL_KEYS,
     LLM7_KEYS,
+    OLLAMA_KEYS,
+    OLLAMA_CLOUD_KEYS,
     seconds_until_rpd_reset,
     log_non_429_error,
     remove_key_from_error_log,
+    wait_for_adapter_and_add_route,
+    restart_vpn_service,
 )
 from proxy_core.state import log_queue as global_log_queue
 
@@ -64,26 +68,125 @@ VPN_CONSECUTIVE_ERRORS = 0
 VPN_CURRENT_INDEX = 1
 VPN_ROTATION_LOCK = asyncio.Lock()
 
+# Parallelism State
+ACTIVE_SLOTS = [0, 1, 2]  # Default 3 active slots (Clear, VPN 1, VPN 2)
+BACKUP_POOL = [3, 4, 5, 6]  # Remaining channels in reserve
+REQUEST_COUNT = 0
+VPN_ANY_TUNNEL_ACTIVE = False
+
 
 async def rotate_vpn_on_the_fly(reason: str):
     global VPN_CURRENT_INDEX
     async with VPN_ROTATION_LOCK:
-        next_index = (VPN_CURRENT_INDEX % 6) + 1
+        next_index = (VPN_CURRENT_INDEX + 1) % 7
         VPN_CURRENT_INDEX = next_index
-        logger.info(f"[VPN] Rotating to VPN {next_index} due to {reason}...")
-        global_log_queue.put(f"[VPN] Rotating to VPN {next_index} due to {reason}...")
-        if vpn_manager:
-            try:
-                await asyncio.to_thread(
-                    vpn_manager.enable_system_routing_via, next_index
-                )
-            except Exception as re:
-                logger.error(f"[VPN] Route enable error: {re}")
-                global_log_queue.put(f"[VPN] [ERROR] Route enable error: {re}")
-        else:
-            logger.warning(
-                "[VPN] vpn_manager not available, skipping actual route change."
+        channel_name = f"VPN {next_index}" if next_index > 0 else "Clear (No VPN)"
+        logger.info(f"[VPN] Rotating bound client to {channel_name} due to {reason}...")
+        global_log_queue.put(
+            f"[VPN] Rotating bound client to {channel_name} due to {reason}..."
+        )
+
+
+# Heartbeat state
+VPN_CONSECUTIVE_FAILURES = {i: 0 for i in range(1, 7)}
+VPN_GRACE_PERIODS = {i: 0.0 for i in range(1, 7)}  # timestamp when grace period ends
+
+
+async def vpn_heartbeat_loop(app):
+    """Background task that checks the health of all 6 VPN channels every 1.0s."""
+    import time
+    import asyncio
+    import subprocess
+
+    logger.info(
+        "[Heartbeat] Waiting 30 seconds for VPN adapters to initialize before starting health checks..."
+    )
+    await asyncio.sleep(30.0)
+
+    logger.info("[Heartbeat] Starting VPN health check loop...")
+    while True:
+        await asyncio.sleep(1.0)
+        now = time.time()
+
+        # Check which services are actually running in the system
+        running_services = set()
+        try:
+            # Set console output encoding to UTF-8 to handle Cyrillic output perfectly
+            # Use single quotes for service name to prevent PowerShell variable interpolation
+            check_services_cmd = "$OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Service -Name 'WireGuardTunnel$*' | Select-Object -Property Name, Status"
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["powershell", "-Command", check_services_cmd],
+                capture_output=True,
+                text=False,
             )
+            if result.returncode == 0 and result.stdout:
+                stdout = result.stdout.decode("utf-8", errors="replace")
+                for line in stdout.splitlines():
+                    if "Running" in line:
+                        for idx in range(1, 7):
+                            if f"WireGuardTunnel$vpn{idx}" in line:
+                                running_services.add(idx)
+        except Exception as se:
+            logger.debug(f"[Heartbeat] Service status check error: {se}")
+            # Fallback: if check fails, assume all are running to avoid false negatives
+            running_services = set(range(1, 7))
+
+        # Update global active status
+        global VPN_ANY_TUNNEL_ACTIVE
+        VPN_ANY_TUNNEL_ACTIVE = len(running_services) > 0
+
+        for i in range(1, 7):
+            # Skip if service is not running
+            if i not in running_services:
+                # Reset failures if service is stopped/not installed
+                VPN_CONSECUTIVE_FAILURES[i] = 0
+                continue
+
+            # Skip if in grace period
+            if now < VPN_GRACE_PERIODS[i]:
+                continue
+
+            client = app.state.vpn_clients.get(i)
+            if not client:
+                continue
+
+            # Perform lightweight GET check (using Google's connectivity check - zero rate limits!)
+            try:
+                resp = await client.get(
+                    "http://connectivitycheck.gstatic.com/generate_204", timeout=5.0
+                )
+                if resp.status_code in (200, 204):
+                    # Success! Reset failures
+                    VPN_CONSECUTIVE_FAILURES[i] = 0
+                else:
+                    raise Exception(f"HTTP status {resp.status_code}")
+            except Exception as e:
+                # Failure! Increment consecutive failures
+                VPN_CONSECUTIVE_FAILURES[i] += 1
+                logger.warning(
+                    f"[Heartbeat] VPN {i} check failed: {e} (Consecutive: {VPN_CONSECUTIVE_FAILURES[i]})"
+                )
+
+                # Step 1: Immediate Route Addition
+                route_cmd = f'New-NetRoute -InterfaceAlias "vpn{i}" -DestinationPrefix "0.0.0.0/0" -NextHop "10.8.0.1" -RouteMetric 50 -Confirm:$false -ErrorAction SilentlyContinue'
+                await asyncio.to_thread(
+                    subprocess.run,
+                    ["powershell", "-Command", route_cmd],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+
+                # Step 2: Service Restart & Cooldown
+                if VPN_CONSECUTIVE_FAILURES[i] >= 3:
+                    logger.error(
+                        f"[Heartbeat] VPN {i} down for 3s. Triggering service restart..."
+                    )
+                    VPN_CONSECUTIVE_FAILURES[i] = 0
+                    VPN_GRACE_PERIODS[i] = now + 15.0  # 15s grace period
+
+                    # Restart service in background thread
+                    await asyncio.to_thread(restart_vpn_service, i)
 
 
 class QueueLogHandler(logging.Handler):
@@ -310,10 +413,32 @@ def extract_text_from_chunk(chunk_str: str, provider: str) -> str:
     return ""
 
 
+def get_next_log_index(session_dir: str) -> int:
+    import re
+
+    max_idx = 0
+    if os.path.exists(session_dir):
+        for fname in os.listdir(session_dir):
+            m = re.match(r"^(\d+)_request", fname)
+            if m:
+                max_idx = max(max_idx, int(m.group(1)))
+            m2 = re.match(r"^N_request(\d+)", fname)
+            if m2:
+                max_idx = max(max_idx, int(m2.group(1)))
+    return max_idx + 1
+
+
 async def write_chat_log(
-    model: str, provider: str, messages: list, response: str, session_id: str
+    model: str,
+    provider: str,
+    messages: list,
+    response: str,
+    session_id: str,
+    raw_request: bytes = None,
+    raw_response: bytes = None,
 ):
     import os
+    import json
     from datetime import datetime
 
     try:
@@ -323,7 +448,7 @@ async def write_chat_log(
         log_file = os.path.join(log_dir, f"chat_log_{today}.txt")
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        def do_write():
+        def do_write_legacy():
             with open(log_file, "a", encoding="utf-8") as f:
                 f.write(f"\n{'=' * 80}\n")
                 f.write(f"TIMESTAMP: {timestamp}\n")
@@ -338,8 +463,47 @@ async def write_chat_log(
                 f.write(response)
                 f.write(f"\n{'=' * 80}\n")
 
-        await asyncio.to_thread(do_write)
-        logger.info(f"Saved chat log to {log_file}")
+        # Session-based logging
+        session_dir = os.path.join(log_dir, session_id)
+        os.makedirs(session_dir, exist_ok=True)
+
+        idx = get_next_log_index(session_dir)
+
+        # Prepare request string representation (no truncation)
+        req_str = ""
+        if raw_request is not None:
+            try:
+                parsed_json = json.loads(raw_request)
+                req_str = json.dumps(parsed_json, indent=2, ensure_ascii=False)
+            except Exception:
+                req_str = raw_request.decode("utf-8", errors="ignore")
+
+        # Prepare response string representation (no truncation)
+        resp_str = ""
+        if raw_response is not None:
+            try:
+                # If valid JSON, pretty-print
+                parsed_json = json.loads(raw_response)
+                resp_str = json.dumps(parsed_json, indent=2, ensure_ascii=False)
+            except Exception:
+                resp_str = raw_response.decode("utf-8", errors="ignore")
+        else:
+            resp_str = response
+
+        def do_write_session():
+            req_path = os.path.join(session_dir, f"{idx}_request.txt")
+            with open(req_path, "w", encoding="utf-8") as f:
+                f.write(req_str.replace("\\n", "\n"))
+
+            resp_path = os.path.join(session_dir, f"{idx}_response.txt")
+            with open(resp_path, "w", encoding="utf-8") as f:
+                f.write(resp_str.replace("\\n", "\n"))
+
+        await asyncio.to_thread(do_write_legacy)
+        await asyncio.to_thread(do_write_session)
+        logger.info(
+            f"Saved chat log to {log_file} and session log to {session_dir} (N={idx})"
+        )
     except Exception as e:
         logger.error(f"Failed to write chat log: {e}")
 
@@ -432,15 +596,29 @@ def get_active_vpn_client(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    limits = httpx.Limits(max_keepalive_connections=100, max_connections=200)
+    rotation_config = load_rotation_config()
+    connect_timeout = float(rotation_config.get("connect_timeout", 15.0))
+    read_timeout = float(rotation_config.get("read_timeout", 120.0))
+
+    limits = httpx.Limits(
+        max_keepalive_connections=100,
+        max_connections=200,
+        keepalive_expiry=30.0,  # Close idle connections after 30s to prevent stale sockets
+    )
+    timeout = httpx.Timeout(
+        connect=connect_timeout,
+        read=read_timeout,
+        write=15.0,
+        pool=15.0,
+    )
 
     # Initialize 7 clients: index 0 (unbound) + indexes 1-6 (bound to corresponding VPN local IPs)
-    app.state.vpn_clients = {0: httpx.AsyncClient(timeout=300.0, limits=limits)}
+    app.state.vpn_clients = {0: httpx.AsyncClient(timeout=timeout, limits=limits)}
     for i in range(1, 7):
         try:
             transport = httpx.AsyncHTTPTransport(local_address=f"10.8.0.1{i}")
             app.state.vpn_clients[i] = httpx.AsyncClient(
-                transport=transport, timeout=300.0, limits=limits
+                transport=transport, timeout=timeout, limits=limits
             )
             logger.info(
                 f"[Lifespan] Initialized bound HTTP client for VPN {i} (10.8.0.1{i})"
@@ -449,12 +627,18 @@ async def lifespan(app: FastAPI):
             logger.error(
                 f"[Lifespan] Failed to bind client to VPN IP 10.8.0.1{i} (falling back to unbound): {e}"
             )
-            app.state.vpn_clients[i] = httpx.AsyncClient(timeout=300.0, limits=limits)
+            app.state.vpn_clients[i] = httpx.AsyncClient(timeout=timeout, limits=limits)
 
     # Maintain app.state.client as default fallback
     app.state.client = app.state.vpn_clients[0]
 
+    # Start heartbeat loop
+    heartbeat_task = asyncio.create_task(vpn_heartbeat_loop(app))
+
     yield
+
+    # On shutdown
+    heartbeat_task.cancel()
 
     for index, client in app.state.vpn_clients.items():
         try:
@@ -495,6 +679,12 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
     elif provider_name == "llm7":
         base_url = "https://api.llm7.io/v1"
         keys_pool = LLM7_KEYS
+    elif provider_name == "ollama":
+        base_url = "https://ollama.com"
+        keys_pool = OLLAMA_KEYS if OLLAMA_KEYS else ["dummy"]
+    elif provider_name == "ollama_cloud":
+        base_url = "https://ollama.com/v1"
+        keys_pool = OLLAMA_CLOUD_KEYS
     else:
         base_url = "https://generativelanguage.googleapis.com"
         keys_pool = API_KEYS
@@ -508,7 +698,7 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
     # Pick the first available key
     api_key = keys_pool[0]
     headers = {"Content-Type": "application/json"}
-    if provider_name in ("openrouter", "mistral", "llm7"):
+    if provider_name in ("openrouter", "mistral", "llm7", "ollama", "ollama_cloud"):
         headers["authorization"] = f"Bearer {api_key}"
     else:
         headers["x-goog-api-key"] = api_key
@@ -516,13 +706,19 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
     # Build payload
     test_body = {"model": model_id, "messages": [{"role": "user", "content": "Hi"}]}
 
-    url = f"{base_url}/chat/completions"
+    if provider_name == "ollama":
+        url = f"{base_url}/api/chat"
+        test_body["stream"] = False
+    else:
+        url = f"{base_url}/chat/completions"
 
     # Resolve the correct bound client for the test request
     rotation_config = load_rotation_config()
     vpn_mode = rotation_config.get("vpn_switching_mode", "disabled")
     vpn_static = int(rotation_config.get("vpn_static_channel", 0))
-    client = get_active_vpn_client(request, vpn_mode, vpn_static, VPN_CURRENT_INDEX)
+
+    current_vpn_index = VPN_CURRENT_INDEX if VPN_ANY_TUNNEL_ACTIVE else 0
+    client = get_active_vpn_client(request, vpn_mode, vpn_static, current_vpn_index)
 
     start_time = time.perf_counter()
     try:
@@ -553,18 +749,28 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
                 "latency_ms": latency_ms,
             }
         elif status_code == 429:
+            logger.error(f"[Test Model] Rate limit exceeded (429): {resp_text}")
+            global_log_queue.put(f"[Test Model] Rate limit exceeded (429): {resp_text}")
             return {
                 "status": "rate_limited",
                 "message": f"Rate limit exceeded (429): {resp_text}",
                 "latency_ms": latency_ms,
             }
         elif status_code == 404:
+            logger.error(f"[Test Model] Model not found (404): {resp_text}")
+            global_log_queue.put(f"[Test Model] Model not found (404): {resp_text}")
             return {
                 "status": "not_found",
                 "message": f"Model not found (404): {resp_text}",
                 "latency_ms": latency_ms,
             }
         else:
+            logger.error(
+                f"[Test Model] Server returned status {status_code}: {resp_text}"
+            )
+            global_log_queue.put(
+                f"[Test Model] Server returned status {status_code}: {resp_text}"
+            )
             return {
                 "status": "error",
                 "message": f"Server returned status {status_code}: {resp_text}",
@@ -572,6 +778,13 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
             }
     except Exception as e:
         latency_ms = int((time.perf_counter() - start_time) * 1000)
+        import traceback
+
+        tb_str = traceback.format_exc()
+        logger.error(
+            f"[Test Model] Network/Connection error on testing '{model_id}' via '{provider_name}' to {url}: {e}\n{tb_str}"
+        )
+        global_log_queue.put(f"[Test Model] [ERROR] connection failed to {url}: {e}")
         return {
             "status": "error",
             "message": f"Network/Connection error: {e}",
@@ -596,6 +809,40 @@ async def reset_cooldowns_endpoint():
     return {"status": "success", "message": "Cooldowns reset successfully."}
 
 
+@app.post("/control/global_reset")
+async def global_reset_endpoint():
+    global \
+        COOLDOWNS, \
+        CONSECUTIVE_429S, \
+        CONSECUTIVE_RPD_429S, \
+        LAST_429_TIME, \
+        LAST_USED, \
+        LAST_REQUEST_TIME, \
+        VPN_CONSECUTIVE_ERRORS, \
+        VPN_CURRENT_INDEX
+    COOLDOWNS.clear()
+    CONSECUTIVE_429S.clear()
+    CONSECUTIVE_RPD_429S.clear()
+    LAST_429_TIME.clear()
+    LAST_USED.clear()
+    LAST_REQUEST_TIME.clear()
+    VPN_CONSECUTIVE_ERRORS = 0
+    VPN_CURRENT_INDEX = 1
+
+    try:
+        config = load_rotation_config()
+        config["model_cooldowns"] = {}
+        config["consecutive_model_failures"] = {}
+        save_rotation_config(config)
+    except Exception as e:
+        logger.error(f"Failed to reset config in global reset: {e}")
+
+    logger.info(
+        "Global reset completed. All cooldowns, consecutive errors, and rotation states have been cleared!"
+    )
+    return {"status": "success", "message": "Global reset successful."}
+
+
 @app.api_route(
     "/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
 )
@@ -613,10 +860,51 @@ async def transparent_proxy(request: Request, path: str):
 
 
 async def _transparent_proxy_attempt(request: Request, path: str):
-    global VPN_CONSECUTIVE_ERRORS, VPN_CURRENT_INDEX
+    global \
+        VPN_CONSECUTIVE_ERRORS, \
+        VPN_CURRENT_INDEX, \
+        REQUEST_COUNT, \
+        ACTIVE_SLOTS, \
+        BACKUP_POOL, \
+        VPN_ANY_TUNNEL_ACTIVE
     body = await request.body()
     query_params = dict(request.query_params)
     session_id = get_session_id(request)
+
+    # Apply context filtering if enabled in rotation config
+    rotation_config = load_rotation_config()
+    if rotation_config.get("filter_context", True) and request.method == "POST":
+        try:
+            from proxy_core.compactor import process_request_payload
+
+            # Parse body to dict with strict=False to allow literal control characters
+            body_str = body.decode("utf-8", errors="ignore")
+            # Clean up escape sequences before parsing (same logic as our test script)
+            from proxy_core.compactor import clean_json_escapes
+
+            body_str = clean_json_escapes(body_str)
+
+            orig_size = len(body)
+            payload_dict = json.loads(body_str, strict=False)
+            compacted_dict = process_request_payload(payload_dict)
+            body = json.dumps(
+                compacted_dict, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
+            comp_size = len(body)
+
+            saved = orig_size - comp_size
+            pct = (saved / orig_size) * 100 if orig_size > 0 else 0.0
+            logger.info(
+                f"[Compactor] Compacted request context: {orig_size:,} -> {comp_size:,} bytes (Saved {saved:,} B, -{pct:.1f}%)"
+            )
+
+            # Update session-wide statistics in state
+            from proxy_core import state
+
+            state.COMPACTOR_ORIG_BYTES += orig_size
+            state.COMPACTOR_COMP_BYTES += comp_size
+        except Exception as ce:
+            logger.error(f"[Compactor] Failed to compact context: {ce}")
 
     if path.startswith("openrouter/"):
         target_base = "https://openrouter.ai/api/v1"
@@ -633,31 +921,59 @@ async def _transparent_proxy_attempt(request: Request, path: str):
         current_path = path[5:]
         keys_pool = LLM7_KEYS
         provider_name = "llm7"
+    elif path.startswith("ollama_cloud/"):
+        target_base = "https://ollama.com/v1"
+        current_path = path[13:]
+        keys_pool = OLLAMA_CLOUD_KEYS
+        provider_name = "ollama_cloud"
     else:
         target_base = TARGET_BASE_URL
         current_path = path
         keys_pool = API_KEYS
         provider_name = "gemini"
 
+    rotation_config = load_rotation_config()
+    parallelism_enabled = rotation_config.get("parallelism_enabled", False)
+    parallel_count = rotation_config.get("parallel_tunnels_count", 3)
+    per_channel_delay = rotation_config.get("per_channel_delay", 0.5)
+
+    # Dynamically adjust active slots and backup pool size
+    if len(ACTIVE_SLOTS) != parallel_count:
+        all_channels = list(range(7))
+        ACTIVE_SLOTS = all_channels[:parallel_count]
+        BACKUP_POOL = all_channels[parallel_count:]
+
+    if parallelism_enabled:
+        # Round-robin selection
+        REQUEST_COUNT += 1
+        slot_idx = REQUEST_COUNT % len(ACTIVE_SLOTS)
+        current_vpn_index = ACTIVE_SLOTS[slot_idx]
+    else:
+        current_vpn_index = VPN_CURRENT_INDEX
+        slot_idx = 0
+
+    # If no VPN tunnels are active in the system, always fall back to the unbound client (index 0)
+    if not VPN_ANY_TUNNEL_ACTIVE:
+        current_vpn_index = 0
+
+    # Per-channel delay check
     current_time = time.time()
-    last_request_time = LAST_REQUEST_TIME.get(provider_name, 0.0)
-    time_since_last_request = current_time - last_request_time
-
-    if time_since_last_request < 1.0:
-        logger.warning(f"[{get_requested_model(path, body)}] [rate-limited] [429]")
-        return JSONResponse(
-            status_code=429,
-            content={
-                "error": {
-                    "message": f"Rate limit exceeded for provider '{provider_name}'. Please wait {1.0 - time_since_last_request:.2f} seconds before trying again."
-                }
-            },
+    if parallelism_enabled:
+        time_since_last_request = current_time - LAST_REQUEST_TIME.get(
+            (provider_name, current_vpn_index), 0.0
         )
-
-    LAST_REQUEST_TIME[provider_name] = current_time
+        if time_since_last_request < per_channel_delay:
+            await asyncio.sleep(per_channel_delay - time_since_last_request)
+        LAST_REQUEST_TIME[(provider_name, current_vpn_index)] = time.time()
+    else:
+        time_since_last_request = current_time - LAST_REQUEST_TIME.get(
+            provider_name, 0.0
+        )
+        if time_since_last_request < 0.5:  # 0.5s global delay
+            await asyncio.sleep(0.5 - time_since_last_request)
+        LAST_REQUEST_TIME[provider_name] = time.time()
 
     requested_model = get_requested_model(path, body)
-    rotation_config = load_rotation_config()
 
     global USE_KAGGLE, FORCE_MODEL, SAVE_CHAT_LOGS
     USE_KAGGLE = rotation_config.get("use_kaggle", USE_KAGGLE)
@@ -767,6 +1083,16 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 logger.info(
                     f"Dynamically registered LLM7 settings for model '{candidate_model}'"
                 )
+            elif path.startswith("ollama_cloud/"):
+                MODEL_SETTINGS[candidate_model] = {
+                    "provider": "ollama_cloud",
+                    "base_url": "https://ollama.com/v1",
+                    "keys_pool": OLLAMA_CLOUD_KEYS,
+                    "target_model": candidate_model,
+                }
+                logger.info(
+                    f"Dynamically registered Ollama Cloud settings for model '{candidate_model}'"
+                )
             else:
                 MODEL_SETTINGS[candidate_model] = {
                     "provider": "gemini",
@@ -812,6 +1138,8 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     target_path = path[8:]
                 elif path.startswith("llm7/"):
                     target_path = path[5:]
+                elif path.startswith("ollama_cloud/"):
+                    target_path = path[13:]
                 else:
                     target_path = path
 
@@ -844,6 +1172,13 @@ async def _transparent_proxy_attempt(request: Request, path: str):
             continue
         else:
             available_keys = sorted(available_keys, key=lambda k: LAST_USED.get(k, 0.0))
+
+        # Distribute keys across parallel channels to ensure different channels use different keys
+        if parallelism_enabled and len(available_keys) > 1:
+            key_idx = current_vpn_index % len(available_keys)
+            selected_key = available_keys[key_idx]
+            available_keys.remove(selected_key)
+            available_keys.insert(0, selected_key)
 
         max_attempts = len(available_keys)
         model_success = False
@@ -898,13 +1233,13 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 )
             }
 
-            if provider_name in ("openrouter", "mistral", "llm7"):
+            if provider_name in ("openrouter", "mistral", "llm7", "ollama_cloud"):
                 headers["authorization"] = f"Bearer {api_key}"
             else:
                 headers["x-goog-api-key"] = api_key
 
             request_body = body
-            if provider_name in ("openrouter", "mistral", "llm7"):
+            if provider_name in ("openrouter", "mistral", "llm7", "ollama_cloud"):
                 try:
                     body_dict = json.loads(body)
                     translated_body = translate_payload_to_openai(
@@ -932,7 +1267,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
                     # Pick the appropriate client (either default, static, or active rotating index)
                     client = get_active_vpn_client(
-                        request, vpn_mode, vpn_static, VPN_CURRENT_INDEX
+                        request, vpn_mode, vpn_static, current_vpn_index
                     )
                 except Exception as ve:
                     logger.error(f"[VPN] Error during client resolution: {ve}")
@@ -991,22 +1326,35 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         req_messages = extract_chat_messages(body)
 
                     response_text_buffer = []
+                    raw_chunks_buffer = []
 
                     async def stream_generator():
                         try:
+                            logger.info(
+                                f"[{candidate_model}] Starting stream transmission..."
+                            )
 
                             async def iter_bytes():
                                 try:
                                     async for chunk in response.aiter_bytes():
+                                        if SAVE_CHAT_LOGS:
+                                            raw_chunks_buffer.append(chunk)
                                         yield chunk
                                 except (httpx.ReadError, httpx.HTTPError) as he:
+                                    logger.error(
+                                        f"[{candidate_model}] Upstream stream read error (abrupt disconnect or timeout): {he}"
+                                    )
+                                    raise  # Propagate to prevent silent 200 OK on failure
+                                except asyncio.CancelledError:
                                     logger.warning(
-                                        f"[{candidate_model}] Upstream stream read error (client disconnect or timeout): {he}"
+                                        f"[{candidate_model}] Stream transmission cancelled by client (OpenCode disconnected)."
                                     )
+                                    raise
                                 except Exception as se:
-                                    logger.debug(
-                                        f"[{candidate_model}] Stream exception: {se}"
+                                    logger.error(
+                                        f"[{candidate_model}] Unexpected stream exception: {se}"
                                     )
+                                    raise
 
                             async def iter_translated_chunks():
                                 async for chunk in iter_bytes():
@@ -1062,12 +1410,26 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
                             async for trans_chunk in iter_translated_chunks():
                                 yield trans_chunk
+
+                            logger.info(
+                                f"[{candidate_model}] Stream transmission completed successfully. Total chunks: {len(raw_chunks_buffer)}"
+                            )
+                        except asyncio.CancelledError:
+                            logger.warning(
+                                f"[{candidate_model}] Stream generator task cancelled."
+                            )
+                            raise
+                        except Exception as e:
+                            logger.error(
+                                f"[{candidate_model}] Stream generator encountered an error: {e}"
+                            )
+                            raise
                         finally:
                             await response.aclose()
-                            if SAVE_CHAT_LOGS and (
-                                req_messages or response_text_buffer
-                            ):
+                            if SAVE_CHAT_LOGS:
                                 response_text = "".join(response_text_buffer)
+                                raw_req_bytes = body
+                                raw_resp_bytes = b"".join(raw_chunks_buffer)
                                 asyncio.create_task(
                                     write_chat_log(
                                         model=candidate_model,
@@ -1075,6 +1437,8 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                         messages=req_messages,
                                         response=response_text,
                                         session_id=session_id,
+                                        raw_request=raw_req_bytes,
+                                        raw_response=raw_resp_bytes,
                                     )
                                 )
 
@@ -1083,138 +1447,164 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         status_code=response.status_code,
                         headers=response_headers,
                     )
-                elif response.status_code == 429:
-                    await response.aclose()
-                    consecutive_429 = CONSECUTIVE_429S.get(provider_name, 0) + 1
-                    CONSECUTIVE_429S[provider_name] = consecutive_429
-
-                    # VPN Integration: Track consecutive 429 errors
-                    VPN_CONSECUTIVE_ERRORS += 1
-
-                    rotation_config = load_rotation_config()
-                    vpn_mode = rotation_config.get("vpn_switching_mode", "disabled")
-                    vpn_threshold = int(rotation_config.get("vpn_errors_threshold", 5))
-
-                    if (
-                        vpn_mode == "error_threshold"
-                        and VPN_CONSECUTIVE_ERRORS >= vpn_threshold
-                    ):
-                        logger.warning(
-                            f"[VPN] Error threshold reached ({VPN_CONSECUTIVE_ERRORS}/{vpn_threshold}). Rotating VPN immediately..."
-                        )
-                        await rotate_vpn_on_the_fly("429 error threshold")
-                        VPN_CONSECUTIVE_ERRORS = 0
-                        # Immediately retry without sleeping
-                        continue
-
-                    if vpn_mode == "disabled" and VPN_CONSECUTIVE_ERRORS >= 5:
-                        logger.warning(
-                            f"[VPN] Consecutive 429 errors reached 5 in Disabled mode. Sleep 65s pause..."
-                        )
-                        await asyncio.sleep(65.0)
-                        VPN_CONSECUTIVE_ERRORS = 0
-                        continue
-
-                    now_ts = time.time()
-                    prev_429_ts = LAST_429_TIME.get(api_key, 0.0)
-                    LAST_429_TIME[api_key] = now_ts
-
-                    cooldown_duration = RETRY_DELAY_SECONDS
-
-                    if prev_429_ts > 0.0:
-                        time_diff = now_ts - prev_429_ts
-                        if time_diff > 300.0:
-                            rpd_consec = CONSECUTIVE_RPD_429S.get(api_key, 0) + 1
-                            CONSECUTIVE_RPD_429S[api_key] = rpd_consec
-                            if rpd_consec >= 3:  # Increased threshold to 3!
-                                if provider_name == "gemini":
-                                    cooldown_duration = seconds_until_rpd_reset()
-                                    logger.error(
-                                        f"[{provider_name}] Key #{key_index} RPD limit. Wait {cooldown_duration / 3600:.1f}h"
-                                    )
-                                else:
-                                    cooldown_duration = 86400.0
-                                    logger.error(
-                                        f"[{provider_name}] Key #{key_index} daily limit. Wait 24h"
-                                    )
-                                CONSECUTIVE_RPD_429S[api_key] = 0
-                        else:
-                            pass
-                    else:
-                        CONSECUTIVE_RPD_429S[api_key] = 1
-
-                    mark_cooldown(api_key, duration=cooldown_duration)
-
-                    logger.warning(
-                        f"[{provider_name}] Key #{key_index} 429 ({candidate_model}) on {request.method} {target_url}. Cooldown {cooldown_duration:.1f}s. Attempt {attempt}/{max_attempts}"
-                    )
-
-                    # Exponential retry sleep: 1, 2, 4, 8, 16, then 65s
-                    if consecutive_429 == 1:
-                        retry_sleep = 1.0
-                    elif consecutive_429 == 2:
-                        retry_sleep = 2.0
-                    elif consecutive_429 == 3:
-                        retry_sleep = 4.0
-                    elif consecutive_429 == 4:
-                        retry_sleep = 8.0
-                    elif consecutive_429 == 5:
-                        retry_sleep = 16.0
-                    else:
-                        retry_sleep = 65.0
-
-                    logger.info(f"[{provider_name}] Sleeping {retry_sleep:.2f}s...")
-                    await asyncio.sleep(retry_sleep)
-                    continue
-                elif response.status_code == 403:
-                    await response.aclose()
-                    mark_cooldown(api_key, duration=86400.0)
-                    error_msg = f"HTTP {response.status_code}: Forbidden"
-                    log_non_429_error(candidate_model, api_key, error_msg)
-                    logger.error(
-                        f"[{provider_name}] Key #{key_index} 403 ({candidate_model}) on {request.method} {target_url}. Cooldown 24h"
-                    )
-                    continue
-                elif response.status_code == 503:
-                    await response.aclose()
-                    mark_cooldown(api_key, duration=10.0)
-                    error_msg = "HTTP 503: Service Unavailable"
-                    log_non_429_error(candidate_model, api_key, error_msg)
-
-                    consecutive_503s += 1
-                    logger.error(
-                        f"[{provider_name}] Key #{key_index} HTTP 503 ({candidate_model}) on {request.method} {target_url}. Consecutive 503s: {consecutive_503s}/10"
-                    )
-
-                    if consecutive_503s >= 10:
-                        logger.error(
-                            f"[{provider_name}] Hit 10 consecutive 503s for model '{candidate_model}'. Forcing provider switch!"
-                        )
-                        break  # Break out of the key loop to switch candidate model (change provider)
-
-                    if consecutive_503s >= 3:
-                        logger.info(
-                            f"[{provider_name}] 3+ consecutive 503s. Sleeping 60s before trying next key..."
-                        )
-                        await asyncio.sleep(60.0)
-                    continue
-                elif response.status_code in (500, 502):
-                    await response.aclose()
-                    mark_cooldown(api_key, duration=10.0)
-                    error_msg = f"HTTP {response.status_code}: Server Error"
-                    log_non_429_error(candidate_model, api_key, error_msg)
-                    logger.error(
-                        f"[{provider_name}] Key #{key_index} HTTP {response.status_code} ({candidate_model}) on {request.method} {target_url}"
-                    )
-                    continue
                 else:
+                    # For any non-200 status code, read the full response body without truncation
+                    try:
+                        await response.aread()
+                        resp_text = response.text
+                    except Exception as re:
+                        resp_text = f"<Failed to read response body: {re}>"
                     await response.aclose()
-                    error_msg = f"HTTP {response.status_code}: Unexpected status"
-                    log_non_429_error(candidate_model, api_key, error_msg)
-                    logger.warning(
-                        f"[{provider_name}] Key #{key_index} HTTP {response.status_code} ({candidate_model}) on {request.method} {target_url}"
-                    )
-                    continue
+
+                    if response.status_code == 429:
+                        if parallelism_enabled:
+                            failed_channel = ACTIVE_SLOTS[slot_idx]
+                            if BACKUP_POOL:
+                                new_channel = BACKUP_POOL.pop(0)
+                                ACTIVE_SLOTS[slot_idx] = new_channel
+                                BACKUP_POOL.append(failed_channel)
+                                logger.info(
+                                    f"[Parallelism] Slot {slot_idx} rotated: Channel {failed_channel} -> Channel {new_channel}"
+                                )
+
+                        consecutive_429 = CONSECUTIVE_429S.get(provider_name, 0) + 1
+                        CONSECUTIVE_429S[provider_name] = consecutive_429
+
+                        # VPN Integration: Track consecutive 429 errors
+                        VPN_CONSECUTIVE_ERRORS += 1
+
+                        rotation_config = load_rotation_config()
+                        vpn_mode = rotation_config.get("vpn_switching_mode", "disabled")
+                        vpn_threshold = int(
+                            rotation_config.get("vpn_errors_threshold", 5)
+                        )
+
+                        if (
+                            VPN_ANY_TUNNEL_ACTIVE
+                            and vpn_mode == "error_threshold"
+                            and VPN_CONSECUTIVE_ERRORS >= vpn_threshold
+                        ):
+                            logger.warning(
+                                f"[VPN] Error threshold reached ({VPN_CONSECUTIVE_ERRORS}/{vpn_threshold}). Rotating VPN immediately..."
+                            )
+                            await rotate_vpn_on_the_fly("429 error threshold")
+                            VPN_CONSECUTIVE_ERRORS = 0
+                            # Immediately retry without sleeping
+                            continue
+
+                        if vpn_mode == "disabled" and VPN_CONSECUTIVE_ERRORS >= 5:
+                            pause_sleep = float(
+                                rotation_config.get("vpn_disabled_pause_sleep", 65.0)
+                            )
+                            logger.warning(
+                                f"[VPN] Consecutive 429 errors reached 5 in Disabled mode. Sleep {pause_sleep}s pause..."
+                            )
+                            await asyncio.sleep(pause_sleep)
+                            VPN_CONSECUTIVE_ERRORS = 0
+                            continue
+
+                        now_ts = time.time()
+                        prev_429_ts = LAST_429_TIME.get(api_key, 0.0)
+                        LAST_429_TIME[api_key] = now_ts
+
+                        cooldown_duration = float(
+                            rotation_config.get("key_cooldown_duration", 90)
+                        )
+
+                        if prev_429_ts > 0.0:
+                            time_diff = now_ts - prev_429_ts
+                            if time_diff > 300.0:
+                                rpd_consec = CONSECUTIVE_RPD_429S.get(api_key, 0) + 1
+                                CONSECUTIVE_RPD_429S[api_key] = rpd_consec
+                                if rpd_consec >= 3:  # Increased threshold to 3!
+                                    if provider_name == "gemini":
+                                        cooldown_duration = seconds_until_rpd_reset()
+                                        logger.error(
+                                            f"[{provider_name}] Key #{key_index} RPD limit. Wait {cooldown_duration / 3600:.1f}h"
+                                        )
+                                    else:
+                                        cooldown_duration = 86400.0
+                                        logger.error(
+                                            f"[{provider_name}] Key #{key_index} daily limit. Wait 24h"
+                                        )
+                                    CONSECUTIVE_RPD_429S[api_key] = 0
+                            else:
+                                pass
+                        else:
+                            CONSECUTIVE_RPD_429S[api_key] = 1
+
+                        mark_cooldown(api_key, duration=cooldown_duration)
+
+                        logger.warning(
+                            f"[{provider_name}] Key #{key_index} 429 ({candidate_model}) on {request.method} {target_url}. Error: {resp_text}. Cooldown {cooldown_duration:.1f}s. Attempt {attempt}/{max_attempts}"
+                        )
+
+                        # Exponential retry sleep: 1, 2, 4, 8, 16, then 65s
+                        if consecutive_429 == 1:
+                            retry_sleep = 1.0
+                        elif consecutive_429 == 2:
+                            retry_sleep = 2.0
+                        elif consecutive_429 == 3:
+                            retry_sleep = 4.0
+                        elif consecutive_429 == 4:
+                            retry_sleep = 8.0
+                        elif consecutive_429 == 5:
+                            retry_sleep = 16.0
+                        else:
+                            retry_sleep = float(
+                                rotation_config.get("max_exponential_sleep", 65.0)
+                            )
+
+                        logger.info(f"[{provider_name}] Sleeping {retry_sleep:.2f}s...")
+                        await asyncio.sleep(retry_sleep)
+                        continue
+                    elif response.status_code == 403:
+                        mark_cooldown(api_key, duration=86400.0)
+                        error_msg = f"HTTP 403 Forbidden: {resp_text}"
+                        log_non_429_error(candidate_model, api_key, error_msg)
+                        logger.error(
+                            f"[{provider_name}] Key #{key_index} 403 ({candidate_model}) on {request.method} {target_url}. Error: {resp_text}. Cooldown 24h"
+                        )
+                        continue
+                    elif response.status_code == 503:
+                        mark_cooldown(api_key, duration=10.0)
+                        error_msg = f"HTTP 503 Service Unavailable: {resp_text}"
+                        log_non_429_error(candidate_model, api_key, error_msg)
+
+                        consecutive_503s += 1
+                        logger.error(
+                            f"[{provider_name}] Key #{key_index} HTTP 503 ({candidate_model}) on {request.method} {target_url}. Error: {resp_text}. Consecutive 503s: {consecutive_503s}/10"
+                        )
+
+                        if consecutive_503s >= 10:
+                            logger.error(
+                                f"[{provider_name}] Hit 10 consecutive 503s for model '{candidate_model}'. Forcing provider switch!"
+                            )
+                            break  # Break out of the key loop to switch candidate model (change provider)
+
+                        if consecutive_503s >= 3:
+                            logger.info(
+                                f"[{provider_name}] 3+ consecutive 503s. Sleeping 60s before trying next key..."
+                            )
+                            await asyncio.sleep(60.0)
+                        continue
+                    elif response.status_code in (500, 502):
+                        mark_cooldown(api_key, duration=10.0)
+                        error_msg = (
+                            f"HTTP {response.status_code} Server Error: {resp_text}"
+                        )
+                        log_non_429_error(candidate_model, api_key, error_msg)
+                        logger.error(
+                            f"[{provider_name}] Key #{key_index} HTTP {response.status_code} ({candidate_model}) on {request.method} {target_url}. Error: {resp_text}"
+                        )
+                        continue
+                    else:
+                        error_msg = f"HTTP {response.status_code} Unexpected Status: {resp_text}"
+                        log_non_429_error(candidate_model, api_key, error_msg)
+                        logger.warning(
+                            f"[{provider_name}] Key #{key_index} HTTP {response.status_code} ({candidate_model}) on {request.method} {target_url}. Error: {resp_text}"
+                        )
+                        continue
 
             except Exception as e:
                 logger.error(
@@ -1225,23 +1615,28 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
                 # VPN Integration: Track consecutive connection errors / timeouts
                 try:
-                    VPN_CONSECUTIVE_ERRORS += 1
+                    if VPN_ANY_TUNNEL_ACTIVE:
+                        VPN_CONSECUTIVE_ERRORS += 1
 
-                    rotation_config = load_rotation_config()
-                    vpn_mode = rotation_config.get("vpn_switching_mode", "disabled")
-                    vpn_threshold = int(rotation_config.get("vpn_errors_threshold", 5))
-
-                    if (
-                        vpn_mode == "error_threshold"
-                        and VPN_CONSECUTIVE_ERRORS >= vpn_threshold
-                    ):
-                        logger.warning(
-                            f"[VPN] Connection error threshold reached ({VPN_CONSECUTIVE_ERRORS}/{vpn_threshold}). Rotating VPN immediately..."
+                        rotation_config = load_rotation_config()
+                        vpn_mode = rotation_config.get("vpn_switching_mode", "disabled")
+                        vpn_threshold = int(
+                            rotation_config.get("vpn_errors_threshold", 5)
                         )
-                        await rotate_vpn_on_the_fly("network error/timeout threshold")
-                        VPN_CONSECUTIVE_ERRORS = 0
-                        # Immediately retry the failed request
-                        continue
+
+                        if (
+                            vpn_mode == "error_threshold"
+                            and VPN_CONSECUTIVE_ERRORS >= vpn_threshold
+                        ):
+                            logger.warning(
+                                f"[VPN] Connection error threshold reached ({VPN_CONSECUTIVE_ERRORS}/{vpn_threshold}). Rotating VPN immediately..."
+                            )
+                            await rotate_vpn_on_the_fly(
+                                "network error/timeout threshold"
+                            )
+                            VPN_CONSECUTIVE_ERRORS = 0
+                            # Immediately retry the failed request
+                            continue
                 except Exception as ve:
                     logger.error(
                         f"[VPN] Error in network exception rotation handling: {ve}"

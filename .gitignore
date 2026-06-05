@@ -44,6 +44,7 @@ error_keys_log.json
 *.log
 proxy_errors.log
 chat_logs/
+tools/
 
 # IDE / Editors
 .vscode/
