@@ -134,7 +134,7 @@ def remove_key_from_error_log(model: str, key: str) -> None:
         )
 
 
-def wait_for_adapter_and_add_route(vpn_index: int, timeout: float = 25.0) -> bool:
+def wait_for_adapter_and_add_route(vpn_index: int, timeout: float = 60.0) -> bool:
     """Polls every 0.5s until the VPN adapter's IP appears, then adds the default route."""
     import time
     import subprocess

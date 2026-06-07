@@ -29,6 +29,28 @@ import logging
 logger = logging.getLogger("proxy")
 
 
+DEFAULT_THINKING_MODELS = [
+    "gemini-3.5-flash",
+    "gemini-3-flash-preview",
+    "openrouter/owl-alpha",
+    "deepseek/deepseek-v4-flash:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "qwen/qwen3-coder:free",
+    "moonshotai/kimi-k2.6:free",
+]
+
+DEFAULT_QUICK_MODELS = [
+    "gemini-flash-lite-latest",
+    "deepseek-v4-flash-free",
+    "mimo-v2.5-free",
+    "nemotron-3-super-free",
+    "google/gemini-2.5-flash:free",
+    "google/gemma-2-9b-it:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
+    "qwen/qwen-2.5-coder-32b-instruct:free",
+]
+
+
 def run_server_subprocess(host: str, port: int, reload: bool):
     cmd = [sys.executable, "proxy3.py", "--host", host, "--port", str(port)]
     if reload:
@@ -99,6 +121,7 @@ class CTkToolTip:
 class ProxyGUI(ctk.CTk):
     def __init__(self, host: str, port: int, reload: bool):
         super().__init__()
+        self.withdraw()  # Hide during init, show after_idle when mainloop starts
         self.host = host
         self.port = port
         self.reload = reload
@@ -109,6 +132,20 @@ class ProxyGUI(ctk.CTk):
         self.restart_backoff = 1.0
         self._restart_pending = False
         self.compactor_settings_win = None
+
+        # Reusable fonts to optimize performance and memory usage
+        self.font_title = ctk.CTkFont(size=12, weight="bold")
+        self.font_badge = ctk.CTkFont(size=10, weight="bold")
+        self.font_bold_10 = ctk.CTkFont(size=10, weight="bold")
+        self.font_normal_10 = ctk.CTkFont(size=10)
+        self.font_bold_11 = ctk.CTkFont(size=11, weight="bold")
+        self.font_bold_12 = ctk.CTkFont(size=12, weight="bold")
+        self.font_bold_14 = ctk.CTkFont(size=14, weight="bold")
+        self.font_bold_16 = ctk.CTkFont(size=16, weight="bold")
+        self.font_normal_9 = ctk.CTkFont(size=9)
+        self.font_bold_9 = ctk.CTkFont(size=9, weight="bold")
+        self.font_normal_8 = ctk.CTkFont(size=8)
+        self.font_bold_8 = ctk.CTkFont(size=8, weight="bold")
 
         import sys
 
@@ -130,7 +167,7 @@ class ProxyGUI(ctk.CTk):
             FORCE_MODEL[k] = v
 
         self.title("Resilient Key Rotation Proxy")
-        self.geometry("900x600")
+        self.geometry("1100x700")
 
         if os.path.exists("app.ico"):
             try:
@@ -138,34 +175,34 @@ class ProxyGUI(ctk.CTk):
             except Exception as e:
                 logger.warning(f"Could not load app.ico: {e}")
 
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_columnconfigure(1, weight=2)
+        self.grid_columnconfigure(0, weight=0)
+        self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        self.left_panel = ctk.CTkFrame(self, width=280, corner_radius=10)
+        self.left_panel = ctk.CTkFrame(self, width=180, corner_radius=10)
         self.left_panel.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
         self.left_panel.pack_propagate(False)
 
         self.status_title = ctk.CTkLabel(
             self.left_panel,
             text="PROXY CONTROLLER",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=self.font_bold_12,
         )
-        self.status_title.pack(pady=(15, 5))
+        self.status_title.pack(pady=(10, 5))
 
         self.status_badge = ctk.CTkLabel(
             self.left_panel,
-            text=f"STATUS: RUNNING (Port {self.port})",
-            font=ctk.CTkFont(size=12, weight="bold"),
+            text=f"RUNNING (Port {self.port})",
+            font=self.font_badge,
             text_color="#4CAF50",
         )
-        self.status_badge.pack(pady=(0, 20))
+        self.status_badge.pack(pady=(0, 10))
 
         ctk.CTkLabel(
             self.left_panel,
             text="Thinking Domain Priority:",
-            font=ctk.CTkFont(size=12, weight="bold"),
-        ).pack(anchor="w", padx=20)
+            font=ctk.CTkFont(size=10, weight="bold"),
+        ).pack(anchor="w", padx=10)
         thinking_models = [
             "Auto (Rotation)",
             "gemini-3.5-flash",
@@ -180,7 +217,7 @@ class ProxyGUI(ctk.CTk):
         self.thinking_select = ctk.CTkOptionMenu(
             self.left_panel, values=thinking_models, command=self.on_thinking_select
         )
-        self.thinking_select.pack(fill="x", padx=20, pady=(2, 15))
+        self.thinking_select.pack(fill="x", padx=10, pady=(2, 10))
         thinking_val = FORCE_MODEL.get("gemini-3.5-flash", "auto")
         if thinking_val == "auto":
             self.thinking_select.set("Auto (Rotation)")
@@ -190,8 +227,8 @@ class ProxyGUI(ctk.CTk):
         ctk.CTkLabel(
             self.left_panel,
             text="Quick Domain Priority:",
-            font=ctk.CTkFont(size=12, weight="bold"),
-        ).pack(anchor="w", padx=20)
+            font=ctk.CTkFont(size=10, weight="bold"),
+        ).pack(anchor="w", padx=10)
         quick_models = [
             "Auto (Rotation)",
             "gemini-flash-lite-latest",
@@ -206,7 +243,7 @@ class ProxyGUI(ctk.CTk):
         self.quick_select = ctk.CTkOptionMenu(
             self.left_panel, values=quick_models, command=self.on_quick_select
         )
-        self.quick_select.pack(fill="x", padx=20, pady=(2, 15))
+        self.quick_select.pack(fill="x", padx=10, pady=(2, 10))
         quick_val = FORCE_MODEL.get("gemini-flash-lite-latest", "auto")
         if quick_val == "auto":
             self.quick_select.set("Auto (Rotation)")
@@ -214,17 +251,17 @@ class ProxyGUI(ctk.CTk):
             self.quick_select.set(quick_val)
 
         self.sep = ctk.CTkFrame(self.left_panel, height=2, fg_color="gray30")
-        self.sep.pack(fill="x", padx=10, pady=10)
+        self.sep.pack(fill="x", padx=5, pady=5)
 
         self.kaggle_var = ctk.BooleanVar(value=config.get("use_kaggle", False))
         self.kaggle_checkbox = ctk.CTkCheckBox(
             self.left_panel,
-            text="Use Kaggle (qwen3.6)",
+            text="Use Kaggle",
             variable=self.kaggle_var,
             command=self.on_kaggle_toggle,
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=ctk.CTkFont(size=10, weight="bold"),
         )
-        self.kaggle_checkbox.pack(anchor="w", padx=20, pady=(5, 5))
+        self.kaggle_checkbox.pack(anchor="w", padx=10, pady=(3, 3))
 
         self.chat_log_var = ctk.BooleanVar(value=config.get("save_chat_logs", False))
         self.chat_log_checkbox = ctk.CTkCheckBox(
@@ -232,9 +269,9 @@ class ProxyGUI(ctk.CTk):
             text="Save Chat Logs",
             variable=self.chat_log_var,
             command=self.on_chat_log_toggle,
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=ctk.CTkFont(size=10, weight="bold"),
         )
-        self.chat_log_checkbox.pack(anchor="w", padx=20, pady=(5, 5))
+        self.chat_log_checkbox.pack(anchor="w", padx=10, pady=(3, 3))
 
         self.filter_context_var = ctk.BooleanVar(
             value=config.get("filter_context", True)
@@ -244,40 +281,52 @@ class ProxyGUI(ctk.CTk):
             text="Filter context",
             variable=self.filter_context_var,
             command=self.on_filter_context_toggle,
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=ctk.CTkFont(size=10, weight="bold"),
         )
-        self.filter_context_checkbox.pack(anchor="w", padx=20, pady=(5, 10))
+        self.filter_context_checkbox.pack(anchor="w", padx=10, pady=(3, 5))
+
+        self.model_rotation_var = ctk.BooleanVar(
+            value=config.get("enable_model_rotation", False)
+        )
+        self.model_rotation_checkbox = ctk.CTkCheckBox(
+            self.left_panel,
+            text="Models Rotation",
+            variable=self.model_rotation_var,
+            command=self.on_model_rotation_toggle,
+            font=self.font_bold_10,
+        )
+        self.model_rotation_checkbox.pack(anchor="w", padx=10, pady=(3, 3))
 
         # Parallelism Checkbox
         self.parallelism_var = ctk.BooleanVar(value=False)
         self.parallelism_cb = ctk.CTkCheckBox(
             self.left_panel,
-            text="Enable Parallelism",
+            text="Parallelism",
             variable=self.parallelism_var,
             command=self.on_save_parallelism_settings,
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=ctk.CTkFont(size=10, weight="bold"),
         )
-        self.parallelism_cb.pack(anchor="w", padx=20, pady=(5, 5))
+        self.parallelism_cb.pack(anchor="w", padx=10, pady=(3, 3))
 
         # Parallel Tunnels Count Frame
         self.parallel_count_frame = ctk.CTkFrame(
             self.left_panel, fg_color="transparent"
         )
-        self.parallel_count_frame.pack(fill="x", padx=20, pady=5)
+        self.parallel_count_frame.pack(fill="x", padx=10, pady=3)
 
         self.parallel_count_var = ctk.IntVar(value=3)
         self.parallel_count_label = ctk.CTkLabel(
             self.parallel_count_frame,
-            text="Parallel Tunnels:",
-            font=ctk.CTkFont(size=11, weight="bold"),
+            text="Tunnels:",
+            font=ctk.CTkFont(size=10, weight="bold"),
         )
-        self.parallel_count_label.pack(side="left", padx=(0, 10))
+        self.parallel_count_label.pack(side="left", padx=(0, 5))
         self.parallel_count_dropdown = ctk.CTkOptionMenu(
             self.parallel_count_frame,
             values=[str(i) for i in range(1, 8)],
             variable=self.parallel_count_var,
             command=lambda _: self.on_save_parallelism_settings(),
-            width=80,
+            width=50,
         )
         self.parallel_count_dropdown.pack(side="right", fill="x", expand=True)
 
@@ -285,18 +334,18 @@ class ProxyGUI(ctk.CTk):
         self.per_channel_delay_frame = ctk.CTkFrame(
             self.left_panel, fg_color="transparent"
         )
-        self.per_channel_delay_frame.pack(fill="x", padx=20, pady=5)
+        self.per_channel_delay_frame.pack(fill="x", padx=10, pady=3)
 
         self.per_channel_delay_label = ctk.CTkLabel(
             self.per_channel_delay_frame,
-            text="Per-Channel Delay (sec):",
-            font=ctk.CTkFont(size=11, weight="bold"),
+            text="Delay (sec):",
+            font=ctk.CTkFont(size=10, weight="bold"),
         )
-        self.per_channel_delay_label.pack(side="left", padx=(0, 10))
+        self.per_channel_delay_label.pack(side="left", padx=(0, 5))
 
         self.per_channel_delay_entry = ctk.CTkEntry(
             self.per_channel_delay_frame,
-            width=60,
+            width=40,
         )
         self.per_channel_delay_entry.pack(side="right")
         self.per_channel_delay_entry.bind(
@@ -306,12 +355,12 @@ class ProxyGUI(ctk.CTk):
         # Reset Daily Cooldowns Button
         self.reset_cooldowns_btn = ctk.CTkButton(
             self.left_panel,
-            text="Reset Daily Cooldowns",
+            text="Reset Cooldowns",
             command=self.on_reset_cooldowns,
             fg_color="#8B0000",
             hover_color="#B22222",
         )
-        self.reset_cooldowns_btn.pack(fill="x", padx=20, pady=(5, 10))
+        self.reset_cooldowns_btn.pack(fill="x", padx=10, pady=(5, 5))
 
         self.open_folder_btn = ctk.CTkButton(
             self.left_panel,
@@ -320,16 +369,16 @@ class ProxyGUI(ctk.CTk):
             fg_color="#3B3B3B",
             hover_color="#555555",
         )
-        self.open_folder_btn.pack(fill="x", padx=20, pady=(10, 10))
+        self.open_folder_btn.pack(fill="x", padx=10, pady=(5, 5))
 
         # Compactor Statistics Frame
         self.stats_frame = ctk.CTkFrame(self.left_panel, fg_color="transparent")
-        self.stats_frame.pack(fill="x", padx=20, pady=(5, 5))
+        self.stats_frame.pack(fill="x", padx=10, pady=(3, 3))
 
         self.stats_title = ctk.CTkLabel(
             self.stats_frame,
-            text="CONTEXT COMPACTION:",
-            font=ctk.CTkFont(size=11, weight="bold"),
+            text="COMPACTION:",
+            font=ctk.CTkFont(size=10, weight="bold"),
             text_color="#3498DB",
         )
         self.stats_title.pack(anchor="w")
@@ -337,7 +386,7 @@ class ProxyGUI(ctk.CTk):
         self.stats_label = ctk.CTkLabel(
             self.stats_frame,
             text="Saved: 0 B (-0.0%)",
-            font=ctk.CTkFont(size=11, weight="bold"),
+            font=ctk.CTkFont(size=10, weight="bold"),
             text_color="gray70",
         )
         self.stats_label.pack(anchor="w")
@@ -345,8 +394,8 @@ class ProxyGUI(ctk.CTk):
         # Compactor Settings Button
         self.compactor_settings_btn = ctk.CTkButton(
             self.stats_frame,
-            text="⚙ Compactor Settings",
-            font=ctk.CTkFont(size=10, weight="bold"),
+            text="⚙ Settings",
+            font=ctk.CTkFont(size=9, weight="bold"),
             height=20,
             command=self.open_compactor_settings_window,
             fg_color="#34495E",
@@ -603,10 +652,18 @@ class ProxyGUI(ctk.CTk):
         # Start periodic 5s status check loop
         self.poll_vpn_status_loop()
 
+        # Refresh model select dropdown lists with current rotation lists
+        self.refresh_model_dropdowns()
+
         self.start_server_subprocess()
         self.poll_queue()
         self.check_subprocess_health()
         self.poll_compactor_stats_loop()
+
+        # Hide briefly for a smooth single-frame layout pass, then show
+        self.withdraw()
+        self.update_idletasks()
+        self.after_idle(self.deiconify)
 
     def on_thinking_select(self, val):
         config = load_rotation_config()
@@ -648,6 +705,13 @@ class ProxyGUI(ctk.CTk):
         config["filter_context"] = val
         save_rotation_config(config)
         logger.info(f"Filter context set to: {val}")
+
+    def on_model_rotation_toggle(self):
+        config = load_rotation_config()
+        val = self.model_rotation_var.get()
+        config["enable_model_rotation"] = val
+        save_rotation_config(config)
+        logger.info(f"Models Rotation set to: {val}")
 
     def on_save_url(self):
         url = self.url_entry.get().strip()
@@ -727,7 +791,7 @@ class ProxyGUI(ctk.CTk):
                 self.log_textbox.see("end")
             except Exception:
                 break
-        self.after(100, self.poll_queue)
+        self.after(300, self.poll_queue)
 
     def start_server_subprocess(self):
         self.stop_server_subprocess()
@@ -1206,13 +1270,13 @@ class ProxyGUI(ctk.CTk):
             # Info text (ID, provider and context)
             info_text = f"{m['name']}\n({m['id']})\nProv: {m.get('provider', 'unknown')}\nCtx: {m['context_length']}"
             lbl = ctk.CTkLabel(
-                row_frame, text=info_text, font=ctk.CTkFont(size=10), justify="left"
+                row_frame, text=info_text, font=self.font_normal_10, justify="left"
             )
             lbl.grid(row=0, column=0, padx=5, pady=2, sticky="w")
 
             # Status Badge (circle indicator)
             badge = ctk.CTkLabel(
-                row_frame, text="●", text_color="#7F8C8D", font=ctk.CTkFont(size=16)
+                row_frame, text="●", text_color="#7F8C8D", font=self.font_bold_16
             )
             badge.grid(row=0, column=1, padx=5)
 
@@ -1226,7 +1290,8 @@ class ProxyGUI(ctk.CTk):
                 text="Test",
                 width=45,
                 height=20,
-                font=ctk.CTkFont(size=9),
+                font=self.font_normal_9,
+                corner_radius=2,
                 command=test_cb,
             )
             btn_test.grid(row=0, column=2, padx=2)
@@ -1240,9 +1305,10 @@ class ProxyGUI(ctk.CTk):
                 text="+ Add",
                 width=45,
                 height=20,
-                font=ctk.CTkFont(size=9),
+                font=self.font_normal_9,
                 fg_color="#27AE60",
                 hover_color="#2ECC71",
+                corner_radius=2,
                 command=add_cb,
             )
             btn_add.grid(row=0, column=3, padx=2)
@@ -1392,9 +1458,7 @@ class ProxyGUI(ctk.CTk):
             row_frame.grid(row=idx, column=0, padx=2, pady=2, sticky="ew")
             row_frame.grid_columnconfigure(0, weight=1)
 
-            lbl = ctk.CTkLabel(
-                row_frame, text=model_id, font=ctk.CTkFont(size=10, weight="bold")
-            )
+            lbl = ctk.CTkLabel(row_frame, text=model_id, font=self.font_bold_10)
             lbl.grid(row=0, column=0, padx=5, pady=2, sticky="w")
 
             # Status Badge (circle indicator)
@@ -1402,7 +1466,7 @@ class ProxyGUI(ctk.CTk):
                 row_frame,
                 text="●",
                 text_color="#7F8C8D",
-                font=ctk.CTkFont(size=14, weight="bold"),
+                font=self.font_bold_14,
             )
             badge.grid(row=0, column=1, padx=5)
 
@@ -1436,7 +1500,8 @@ class ProxyGUI(ctk.CTk):
                 text="Test",
                 width=40,
                 height=18,
-                font=ctk.CTkFont(size=8, weight="bold"),
+                font=self.font_bold_8,
+                corner_radius=2,
                 command=test_cb,
             )
             btn_test.grid(row=0, column=2, padx=2)
@@ -1450,7 +1515,8 @@ class ProxyGUI(ctk.CTk):
                     text="▲",
                     width=22,
                     height=18,
-                    font=ctk.CTkFont(size=8),
+                    font=self.font_normal_8,
+                    corner_radius=2,
                     command=up_cb,
                 )
                 btn_up.grid(row=0, column=3, padx=1)
@@ -1462,7 +1528,8 @@ class ProxyGUI(ctk.CTk):
                     text="▼",
                     width=22,
                     height=18,
-                    font=ctk.CTkFont(size=8),
+                    font=self.font_normal_8,
+                    corner_radius=2,
                     command=down_cb,
                 )
                 btn_down.grid(row=0, column=4, padx=1)
@@ -1475,9 +1542,10 @@ class ProxyGUI(ctk.CTk):
                     width=22,
                     height=18,
                     text_color="#E74C3C",
-                    font=ctk.CTkFont(size=8),
+                    font=self.font_normal_8,
                     fg_color="transparent",
                     hover_color="#2c2c2c",
+                    corner_radius=2,
                     command=del_cb,
                 )
                 btn_del.grid(row=0, column=5, padx=1)
@@ -1523,9 +1591,66 @@ class ProxyGUI(ctk.CTk):
             log_queue.put(
                 f"[GUI] Successfully saved active {self.active_domain_key} rotation configuration!"
             )
+            self.refresh_model_dropdowns()
         except Exception as e:
             logger.error(f"[GUI] Failed to save rotation config: {e}")
             log_queue.put(f"[GUI] [ERROR] Failed to save rotation config: {e}")
+
+    def refresh_model_dropdowns(self):
+        """Refresh the model selection dropdown lists on the left panel with current rotation lists."""
+        try:
+            config = load_rotation_config()
+            rotation_lists = config.get("rotation_lists", {})
+
+            # 1. Thinking models
+            thinking_list = rotation_lists.get("gemini-3.5-flash", [])
+            if not thinking_list:
+                thinking_list = DEFAULT_THINKING_MODELS
+            # Ensure unique and preserve order, prepend Auto (Rotation)
+            thinking_values = ["Auto (Rotation)"]
+            for m in thinking_list:
+                if m not in thinking_values:
+                    thinking_values.append(m)
+
+            # Update option menu values
+            self.thinking_select.configure(values=thinking_values)
+
+            # Restore current selection or set to Auto if not found
+            force_model_config = config.get("force_model", {})
+            thinking_val = force_model_config.get("gemini-3.5-flash", "auto")
+            if thinking_val == "auto" or thinking_val not in thinking_values:
+                self.thinking_select.set("Auto (Rotation)")
+                if thinking_val != "auto" and thinking_val not in thinking_values:
+                    config["force_model"]["gemini-3.5-flash"] = "auto"
+                    save_rotation_config(config)
+            else:
+                self.thinking_select.set(thinking_val)
+
+            # 2. Quick models
+            quick_list = rotation_lists.get("gemini-flash-lite-latest", [])
+            if not quick_list:
+                quick_list = DEFAULT_QUICK_MODELS
+            quick_values = ["Auto (Rotation)"]
+            for m in quick_list:
+                if m not in quick_values:
+                    quick_values.append(m)
+
+            self.quick_select.configure(values=quick_values)
+
+            quick_val = force_model_config.get("gemini-flash-lite-latest", "auto")
+            if quick_val == "auto" or quick_val not in quick_values:
+                self.quick_select.set("Auto (Rotation)")
+                if quick_val != "auto" and quick_val not in quick_values:
+                    config["force_model"]["gemini-flash-lite-latest"] = "auto"
+                    save_rotation_config(config)
+            else:
+                self.quick_select.set(quick_val)
+
+            logger.info(
+                "[GUI] Refreshed model selection dropdown lists with current rotation lists."
+            )
+        except Exception as e:
+            logger.error(f"[GUI] Failed to refresh model dropdowns: {e}")
 
     def on_vpn_start_tunnels(self):
         """Install and start all 6 WireGuard tunnels in a background thread."""
@@ -1574,12 +1699,22 @@ class ProxyGUI(ctk.CTk):
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,
                         )
+                        # Set startup type to Manual
+                        subprocess.run(
+                            [
+                                "powershell",
+                                "-Command",
+                                f"Set-Service -Name 'WireGuardTunnel$vpn{i}' -StartupType Manual",
+                            ],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
                         log_queue.put(
                             f"[GUI] [SYSTEM] Service vpn{i} started. Waiting for adapter..."
                         )
 
                         # Wait for adapter and add route
-                        if wait_for_adapter_and_add_route(i, timeout=25.0):
+                        if wait_for_adapter_and_add_route(i, timeout=60.0):
                             log_queue.put(
                                 f"[GUI] [SUCCESS] VPN {i} is fully ready and routed!"
                             )
@@ -1742,23 +1877,31 @@ class ProxyGUI(ctk.CTk):
             return f"{size_bytes / (1024 * 1024):.2f} MB"
 
     def poll_compactor_stats_loop(self):
-        """Periodic loop to poll compactor statistics from the server and update UI."""
-        import httpx
+        """Periodic loop to poll compactor statistics from the server and update UI using a single long-running background thread."""
+        if (
+            hasattr(self, "_compactor_stats_thread_started")
+            and self._compactor_stats_thread_started
+        ):
+            return
+        self._compactor_stats_thread_started = True
 
-        def do_poll():
-            try:
-                url = f"http://{self.host}:{self.port}/control/stats"
-                response = httpx.get(url, timeout=1.0)
-                if response.status_code == 200:
-                    data = response.json()
-                    self.after(0, lambda: self.update_stats_ui(data))
-            except Exception:
-                # Server might be offline or starting
-                pass
-            finally:
-                self.after(2000, self.poll_compactor_stats_loop)
+        def poll_loop():
+            import httpx
+            import time
 
-        threading.Thread(target=do_poll, daemon=True).start()
+            while True:
+                try:
+                    url = f"http://{self.host}:{self.port}/control/stats"
+                    response = httpx.get(url, timeout=1.0)
+                    if response.status_code == 200:
+                        data = response.json()
+                        self.after(0, lambda d=data: self.update_stats_ui(d))
+                except Exception:
+                    # Server might be offline or starting
+                    pass
+                time.sleep(2.0)
+
+        threading.Thread(target=poll_loop, daemon=True).start()
 
     def open_compactor_settings_window(self):
         """Open a settings window for the context compactor."""
@@ -1771,7 +1914,7 @@ class ProxyGUI(ctk.CTk):
 
         self.compactor_settings_win = ctk.CTkToplevel(self)
         self.compactor_settings_win.title("Compactor Settings")
-        self.compactor_settings_win.geometry("480x420")
+        self.compactor_settings_win.geometry("480x450")
         self.compactor_settings_win.resizable(False, False)
         self.compactor_settings_win.attributes("-topmost", True)
 
@@ -1872,6 +2015,17 @@ class ProxyGUI(ctk.CTk):
         )
         self.cb_inject_guardrails.pack(anchor="w", pady=5)
 
+        self.var_enable_headroom = tk.BooleanVar(
+            value=config.get("compactor_enable_headroom", True)
+        )
+        self.cb_enable_headroom = ctk.CTkCheckBox(
+            cb_frame,
+            text="Enable Headroom Context Compression",
+            variable=self.var_enable_headroom,
+            font=ctk.CTkFont(size=11),
+        )
+        self.cb_enable_headroom.pack(anchor="w", pady=5)
+
         # Save settings callback
         def save_settings():
             try:
@@ -1885,6 +2039,7 @@ class ProxyGUI(ctk.CTk):
                 cfg["compactor_block_generic_read"] = self.var_block_generic_read.get()
                 cfg["compactor_move_reminders"] = self.var_move_reminders.get()
                 cfg["compactor_inject_guardrails"] = self.var_inject_guardrails.get()
+                cfg["compactor_enable_headroom"] = self.var_enable_headroom.get()
                 save_rotation_config(cfg)
                 logger.info("[GUI] Compactor settings saved successfully.")
                 log_queue.put("[GUI] Compactor settings saved successfully.")

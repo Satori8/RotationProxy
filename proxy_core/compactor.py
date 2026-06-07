@@ -4,6 +4,23 @@ import logging
 
 logger = logging.getLogger("proxy")
 
+# Check for required dependencies at startup
+try:
+    import headroom
+except ImportError:
+    logger.error("=" * 80)
+    logger.error("CRITICAL SYSTEM ERROR: 'headroom' module is NOT installed!")
+    logger.error("Headroom context compression will NOT work. Please run with 'uv run --with headroom-ai[all]'.")
+    logger.error("=" * 80)
+
+try:
+    import tree_sitter
+except ImportError:
+    logger.error("=" * 80)
+    logger.error("CRITICAL SYSTEM ERROR: 'tree_sitter' module is NOT installed!")
+    logger.error("AST-aware parsing and monkey-patches will NOT work.")
+    logger.error("=" * 80)
+
 # Code and structured file extensions that are banned for the generic 'read' tool
 CODE_EXTENSIONS = {
     ".py",
@@ -199,9 +216,9 @@ def compact_tools_with_static_map(data):
                     ):
                         for param_name, new_desc in cfg["properties"].items():
                             if param_name in func["parameters"]["properties"]:
-                                func["parameters"]["properties"][param_name][
-                                    "description"
-                                ] = new_desc
+                                param_obj = func["parameters"]["properties"][param_name]
+                                if isinstance(param_obj, dict):
+                                    param_obj["description"] = new_desc
         # OpenAI format
         elif tool_group.get("type") == "function" and "function" in tool_group:
             func = tool_group["function"]
@@ -217,9 +234,9 @@ def compact_tools_with_static_map(data):
                 ):
                     for param_name, new_desc in cfg["properties"].items():
                         if param_name in func["parameters"]["properties"]:
-                            func["parameters"]["properties"][param_name][
-                                "description"
-                            ] = new_desc
+                            param_obj = func["parameters"]["properties"][param_name]
+                            if isinstance(param_obj, dict):
+                                param_obj["description"] = new_desc
     return data
 
 
@@ -603,12 +620,12 @@ def inject_tool_guardrails(data):
 
 [CRITICAL TOOL GUARDRAIL:
 1. You are STRICTLY FORBIDDEN from using the generic 'read' or 'write' tools for any code files (Python, TS, JS, Go, Rust, C++, C#, etc.).
-2. For reading code files, you MUST use 'smart-context_smart_read' (mode='outline'/'signatures'/'symbol') or 'token-savior_get_function_source'.
-3. For modifying code files, you MUST use 'token-savior_replace_symbol_source' or 'edit'.
-4. For searching code or text, you MUST use 'smart-context_smart_search' or 'token-savior_search_codebase' instead of generic 'grep' or 'search'.
-5. For finding files by name, you MUST use 'fff_find_files' or 'cortexast_cortex_code_explorer' instead of generic 'glob' or 'find'.
-6. For running build, test, lint, or git checks, you MUST use 'smart-context_smart_shell' instead of generic 'shell'.
-7. Direct 'read', 'write', 'grep', 'glob', and 'shell' tools are restricted and should be avoided in favor of optimized tools.]"""
+2. For reading code files, you MUST use 'tokensave_tokensave_node' or 'cortexast_cortex_symbol_analyzer(action="read_source")' to extract specific functions/classes by name. No raw full-file reading.
+3. For modifying code files, you MUST use 'tokensave_tokensave_str_replace' or 'tokensave_tokensave_multi_str_replace' for precise, safe string replacements. Fails if 0 or >1 matches to protect against multi-edit bugs. No full file overwrites.
+4. For searching code or text, you MUST use 'tokensave_tokensave_search' or 'lean-ctx_ctx_search' instead of generic 'grep' or 'search'.
+5. For finding files by name, you MUST use 'fff_find_files' or 'cortexast_cortex_code_explorer(action="map_overview")' instead of generic 'glob' or 'find'.
+6. For running build, test, lint, or git checks, you MUST use 'lean-ctx_ctx_shell' or 'cortexast_run_diagnostics' instead of generic 'shell' or 'bash'.
+7. Direct 'read', 'write', 'grep', 'glob', and 'shell' tools are restricted and should be avoided in favor of optimized tokensave and lean-ctx tools.]"""
 
     # Helper to clean up bad instructions in Fixer/Refactorer prompts
     def clean_bad_instructions(text: str) -> str:
@@ -617,14 +634,51 @@ def inject_tool_guardrails(data):
         # Replace "use grep/glob/read directly"
         text = re.sub(
             r"use grep/glob/read directly",
-            "use smart-context_smart_search, token-savior_search_codebase, or fff_find_files directly",
+            "use tokensave_tokensave_search, lean-ctx_ctx_search, or fff_find_files directly",
             text,
             flags=re.IGNORECASE,
         )
         # Replace "Read files before using edit/write tools"
         text = re.sub(
             r"Read files before using edit/write tools",
-            "Read files using smart-context_smart_read before using edit/token-savior tools",
+            "Read files using tokensave_tokensave_node or lean-ctx_ctx_read before using edit/tokensave tools",
+            text,
+            flags=re.IGNORECASE,
+        )
+        # Replace smart-context and token-savior tools with current ones
+        text = re.sub(
+            r"smart-context_smart_search",
+            "lean-ctx_ctx_search",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"token-savior_search_codebase",
+            "tokensave_tokensave_search",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"smart-context_smart_read",
+            "lean-ctx_ctx_read",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"token-savior_get_function_source",
+            "tokensave_tokensave_node",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"token-savior_replace_symbol_source",
+            "tokensave_tokensave_replace_symbol",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"smart-context_smart_shell",
+            "lean-ctx_ctx_shell",
             text,
             flags=re.IGNORECASE,
         )
@@ -693,11 +747,33 @@ def process_request_payload(payload_dict, config=None):
     import json
     from proxy_core import state
 
+    try:
+        import tiktoken
+
+        encoding = tiktoken.get_encoding("cl100k_base")
+    except Exception:
+        encoding = None
+
+    def get_metrics(data):
+        try:
+            serialized = json.dumps(data, ensure_ascii=False)
+            size_bytes = len(serialized.encode("utf-8"))
+            if encoding:
+                tokens = len(encoding.encode(serialized))
+            else:
+                tokens = 0
+            return size_bytes, tokens
+        except Exception:
+            return 0, 0
+
     def get_payload_size(data):
         try:
             return len(json.dumps(data, ensure_ascii=False))
         except Exception:
             return 0
+
+    # Stage 1: Input from OpenCode
+    orig_bytes, orig_tokens = get_metrics(payload_dict)
 
     # 1. Compact tools
     if config.get("compactor_compact_tools", True):
@@ -756,5 +832,168 @@ def process_request_payload(payload_dict, config=None):
     # 7. Inject Tool Guardrails to force optimized tools
     if config.get("compactor_inject_guardrails", True):
         payload_dict = inject_tool_guardrails(payload_dict)
+
+    # Stage 2: After our local compaction
+    local_bytes, local_tokens = get_metrics(payload_dict)
+
+    # Check if headroom is available
+    has_headroom = False
+    try:
+        import headroom
+        has_headroom = True
+    except ImportError:
+        pass
+
+    # Check if tree_sitter is available
+    has_tree_sitter = False
+    try:
+        import tree_sitter
+        has_tree_sitter = True
+    except ImportError:
+        pass
+
+    if has_headroom:
+        # Monkey-patch headroom content router to avoid hanging on Rust detect_content_type
+        try:
+            import headroom.transforms.content_router as cr
+
+            if cr._detect_content != cr._regex_detect_content_type:
+                cr._detect_content = cr._regex_detect_content_type
+                logger.debug(
+                    "[Compactor] Monkey-patched headroom._detect_content to use pure Python regex detector"
+                )
+        except Exception as e:
+            logger.error(f"[Compactor] Failed to monkey-patch headroom: {e}")
+
+        # Monkey-patch CodeLanguage to handle unknown languages (like 'dot') gracefully
+        try:
+            from headroom.transforms.code_compressor import CodeLanguage
+            _orig_new = CodeLanguage.__new__
+            def _safe_new(cls, value):
+                try:
+                    return _orig_new(cls, value)
+                except ValueError:
+                    return CodeLanguage.UNKNOWN
+            CodeLanguage.__new__ = _safe_new
+            logger.debug("[Compactor] Monkey-patched CodeLanguage to handle unknown languages gracefully")
+        except Exception as e:
+            logger.error(f"[Compactor] Failed to monkey-patch CodeLanguage: {e}")
+
+        # Monkey-patch CodeAwareCompressor._fallback_compress to prevent slow ONNX model loading/inference
+        try:
+            from headroom.transforms.code_compressor import CodeAwareCompressor, CodeCompressionResult
+            def _safe_fallback_compress(self, code: str, original_tokens: int):
+                return CodeCompressionResult(
+                    compressed=code,
+                    original=code,
+                    original_tokens=original_tokens,
+                    compressed_tokens=original_tokens,
+                    compression_ratio=1.0,
+                    language=CodeLanguage.UNKNOWN,
+                    language_confidence=0.0,
+                    syntax_valid=True,
+                )
+            CodeAwareCompressor._fallback_compress = _safe_fallback_compress
+            logger.debug("[Compactor] Monkey-patched CodeAwareCompressor._fallback_compress to disable slow ONNX fallback")
+        except Exception as e:
+            logger.error(f"[Compactor] Failed to monkey-patch CodeAwareCompressor fallback: {e}")
+    else:
+        logger.error("[Compactor] ERROR: 'headroom' module is missing! Headroom context compression is disabled.")
+
+    if has_tree_sitter:
+        # Monkey-patch tree_sitter Parser.parse to handle bytes vs str issues gracefully
+        try:
+            _orig_parse = tree_sitter.Parser.parse
+            def _safe_parse(self, source, *args, **kwargs):
+                if isinstance(source, bytes):
+                    try:
+                        return _orig_parse(self, source, *args, **kwargs)
+                    except TypeError as te:
+                        if "bytes" in str(te) or "str" in str(te):
+                            return _orig_parse(self, source.decode("utf-8", errors="replace"), *args, **kwargs)
+                        raise
+                return _orig_parse(self, source, *args, **kwargs)
+            tree_sitter.Parser.parse = _safe_parse
+            logger.debug("[Compactor] Monkey-patched tree_sitter.Parser.parse to handle bytes vs str gracefully")
+        except Exception as e:
+            logger.error(f"[Compactor] Failed to monkey-patch tree_sitter.Parser.parse: {e}")
+    else:
+        logger.error("[Compactor] ERROR: 'tree_sitter' module is missing! AST monkey-patches are disabled.")
+
+    # 8. Headroom compression strictly after our local message compaction
+    if has_headroom and config.get("compactor_enable_headroom", True):
+        try:
+            from headroom.transforms.content_router import ContentRouter, ContentRouterConfig, CompressionStrategy
+
+            # Configure ContentRouter to disable slow ONNX-based Kompress ML model,
+            # preventing 2+ second delays while keeping fast SmartCrusher active for JSON
+            # and enabling fast, AST-aware CodeCompressor for Python code
+            cfg = ContentRouterConfig(
+                enable_kompress=False,
+                enable_code_aware=True,
+                fallback_strategy=CompressionStrategy.PASSTHROUGH,
+                prefer_code_aware_for_code=True,
+            )
+            router = ContentRouter(config=cfg)
+
+            if "messages" in payload_dict:
+                # OpenAI format: compress only string content fields directly to preserve tool_calls and structure
+                for msg in payload_dict["messages"]:
+                    if isinstance(msg, dict) and "content" in msg:
+                        content = msg["content"]
+                        if isinstance(content, str) and len(content) > 500:
+                            res = router.compress(content)
+                            msg["content"] = res.compressed
+            elif "contents" in payload_dict:
+                # Gemini format: compress text parts and functionResponse content fields directly to preserve structure
+                for content in payload_dict["contents"]:
+                    parts = content.get("parts", [])
+                    for part in parts:
+                        if isinstance(part, dict):
+                            if "text" in part:
+                                text = part["text"]
+                                if isinstance(text, str) and len(text) > 500:
+                                    res = router.compress(text)
+                                    part["text"] = res.compressed
+                            elif "functionResponse" in part:
+                                func_resp = part["functionResponse"]
+                                if isinstance(func_resp, dict) and "response" in func_resp:
+                                    resp = func_resp["response"]
+                                    if isinstance(resp, dict) and "content" in resp:
+                                        tool_content = resp["content"]
+                                        if isinstance(tool_content, str) and len(tool_content) > 500:
+                                            res = router.compress(tool_content)
+                                            resp["content"] = res.compressed
+        except Exception as e:
+            logger.error(f"Error in headroom compression: {e}")
+
+    # Stage 3: After headroom compression (final)
+    final_bytes, final_tokens = get_metrics(payload_dict)
+
+    # Calculate savings percentages
+    saved_bytes = orig_bytes - final_bytes
+    pct_bytes = (saved_bytes / orig_bytes) * 100 if orig_bytes > 0 else 0.0
+
+    saved_tokens = orig_tokens - final_tokens
+    pct_tokens = (saved_tokens / orig_tokens) * 100 if orig_tokens > 0 else 0.0
+
+    # Log the detailed statistics
+    logger.info(
+        f"[Compactor] Context Compaction Statistics:\n"
+        f"  * Input from OpenCode: {orig_bytes / 1024:.2f} KB ({orig_tokens:,} tokens)\n"
+        f"  * After Local Compaction: {local_bytes / 1024:.2f} KB ({local_tokens:,} tokens)\n"
+        f"  * After Headroom Compression: {final_bytes / 1024:.2f} KB ({final_tokens:,} tokens)\n"
+        f"  * Total Savings: {saved_bytes / 1024:.2f} KB (-{pct_bytes:.1f}%) | {saved_tokens:,} tokens (-{pct_tokens:.1f}%)"
+    )
+
+    # Update state variables
+    state.COMPACTOR_ORIG_BYTES = getattr(state, "COMPACTOR_ORIG_BYTES", 0) + orig_bytes
+    state.COMPACTOR_COMP_BYTES = getattr(state, "COMPACTOR_COMP_BYTES", 0) + final_bytes
+    state.COMPACTOR_ORIG_TOKENS = (
+        getattr(state, "COMPACTOR_ORIG_TOKENS", 0) + orig_tokens
+    )
+    state.COMPACTOR_COMP_TOKENS = (
+        getattr(state, "COMPACTOR_COMP_TOKENS", 0) + final_tokens
+    )
 
     return payload_dict

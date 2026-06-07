@@ -1,5 +1,6 @@
 import time
 import json
+import re
 import random
 import asyncio
 import logging
@@ -90,6 +91,7 @@ async def rotate_vpn_on_the_fly(reason: str):
 # Heartbeat state
 VPN_CONSECUTIVE_FAILURES = {i: 0 for i in range(1, 7)}
 VPN_GRACE_PERIODS = {i: 0.0 for i in range(1, 7)}  # timestamp when grace period ends
+RUNNING_VPN_CHANNELS = set(range(1, 7))
 
 
 async def vpn_heartbeat_loop(app):
@@ -99,9 +101,9 @@ async def vpn_heartbeat_loop(app):
     import subprocess
 
     logger.info(
-        "[Heartbeat] Waiting 30 seconds for VPN adapters to initialize before starting health checks..."
+        "[Heartbeat] Waiting 60 seconds for VPN adapters to initialize before starting health checks..."
     )
-    await asyncio.sleep(30.0)
+    await asyncio.sleep(60.0)
 
     logger.info("[Heartbeat] Starting VPN health check loop...")
     while True:
@@ -178,15 +180,23 @@ async def vpn_heartbeat_loop(app):
                 )
 
                 # Step 2: Service Restart & Cooldown
-                if VPN_CONSECUTIVE_FAILURES[i] >= 3:
+                if VPN_CONSECUTIVE_FAILURES[i] >= 5:
                     logger.error(
-                        f"[Heartbeat] VPN {i} down for 3s. Triggering service restart..."
+                        f"[Heartbeat] VPN {i} down for 5s. Triggering service restart..."
                     )
                     VPN_CONSECUTIVE_FAILURES[i] = 0
                     VPN_GRACE_PERIODS[i] = now + 15.0  # 15s grace period
 
                     # Restart service in background thread
                     await asyncio.to_thread(restart_vpn_service, i)
+
+        # Update RUNNING_VPN_CHANNELS based on latest check results
+        global RUNNING_VPN_CHANNELS
+        healthy_channels = set()
+        for idx in running_services:
+            if VPN_CONSECUTIVE_FAILURES[idx] < 3:
+                healthy_channels.add(idx)
+        RUNNING_VPN_CHANNELS = healthy_channels
 
 
 class QueueLogHandler(logging.Handler):
@@ -413,6 +423,56 @@ def extract_text_from_chunk(chunk_str: str, provider: str) -> str:
     return ""
 
 
+def extract_token_usage(raw_response: bytes) -> dict:
+    usage_info = {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "cached_tokens": 0,
+    }
+    try:
+        response_str = raw_response.decode("utf-8", errors="ignore")
+
+        # 1. Try to find OpenAI/OpenRouter format usage
+        prompt_match = re.search(r'"prompt_tokens"\s*:\s*(\d+)', response_str)
+        completion_match = re.search(r'"completion_tokens"\s*:\s*(\d+)', response_str)
+        total_match = re.search(r'"total_tokens"\s*:\s*(\d+)', response_str)
+        cached_match = re.search(r'"cached_tokens"\s*:\s*(\d+)', response_str)
+
+        if prompt_match:
+            usage_info["prompt_tokens"] = int(prompt_match.group(1))
+        if completion_match:
+            usage_info["completion_tokens"] = int(completion_match.group(1))
+        if total_match:
+            usage_info["total_tokens"] = int(total_match.group(1))
+        if cached_match:
+            usage_info["cached_tokens"] = int(cached_match.group(1))
+
+        # 2. Try to find Gemini format usage (usageMetadata)
+        prompt_gemini = re.search(r'"promptTokenCount"\s*:\s*(\d+)', response_str)
+        completion_gemini = re.search(
+            r'"candidatesTokenCount"\s*:\s*(\d+)', response_str
+        )
+        total_gemini = re.search(r'"totalTokenCount"\s*:\s*(\d+)', response_str)
+        cached_gemini = re.search(
+            r'"cachedContentTokenCount"\s*:\s*(\d+)', response_str
+        )
+
+        if prompt_gemini:
+            usage_info["prompt_tokens"] = int(prompt_gemini.group(1))
+        if completion_gemini:
+            usage_info["completion_tokens"] = int(completion_gemini.group(1))
+        if total_gemini:
+            usage_info["total_tokens"] = int(total_gemini.group(1))
+        if cached_gemini:
+            usage_info["cached_tokens"] = int(cached_gemini.group(1))
+
+    except Exception as e:
+        logger.debug(f"Failed to extract token usage: {e}")
+
+    return usage_info
+
+
 def get_next_log_index(session_dir: str) -> int:
     import re
 
@@ -509,10 +569,24 @@ async def write_chat_log(
 
 
 def translate_payload_to_openai(gemini_payload: dict, target_model: str) -> dict:
+    is_mistral_medium = "mistral-medium" in target_model.lower()
+
     if "messages" in gemini_payload:
         # Already in OpenAI format, just update the model to target_model
         new_payload = dict(gemini_payload)
         new_payload["model"] = target_model
+
+        if is_mistral_medium:
+            # Inject loop mitigation parameters
+            if "frequency_penalty" not in new_payload:
+                new_payload["frequency_penalty"] = 0.5
+            if "presence_penalty" not in new_payload:
+                new_payload["presence_penalty"] = 0.5
+            # If temperature is too low, raise it slightly to break loops
+            temp = new_payload.get("temperature")
+            if temp is not None and float(temp) < 0.3:
+                new_payload["temperature"] = 0.3
+
         return new_payload
 
     openai_payload = {"model": target_model, "messages": []}
@@ -534,6 +608,17 @@ def translate_payload_to_openai(gemini_payload: dict, target_model: str) -> dict
             openai_payload["max_tokens"] = gc["maxOutputTokens"]
         if "topP" in gc:
             openai_payload["top_p"] = gc["topP"]
+
+    if is_mistral_medium:
+        # Inject loop mitigation parameters for translated payloads too
+        if "frequency_penalty" not in openai_payload:
+            openai_payload["frequency_penalty"] = 0.5
+        if "presence_penalty" not in openai_payload:
+            openai_payload["presence_penalty"] = 0.5
+        temp = openai_payload.get("temperature")
+        if temp is not None and float(temp) < 0.3:
+            openai_payload["temperature"] = 0.3
+
     return openai_payload
 
 
@@ -959,6 +1044,8 @@ async def get_control_stats():
     return {
         "compactor_orig_bytes": getattr(state, "COMPACTOR_ORIG_BYTES", 0),
         "compactor_comp_bytes": getattr(state, "COMPACTOR_COMP_BYTES", 0),
+        "compactor_orig_tokens": getattr(state, "COMPACTOR_ORIG_TOKENS", 0),
+        "compactor_comp_tokens": getattr(state, "COMPACTOR_COMP_TOKENS", 0),
         "compactor_saved_tools": getattr(state, "COMPACTOR_SAVED_TOOLS", 0),
         "compactor_saved_superpowers": getattr(state, "COMPACTOR_SAVED_SUPERPOWERS", 0),
         "compactor_saved_skills": getattr(state, "COMPACTOR_SAVED_SKILLS", 0),
@@ -1013,25 +1100,11 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
             body_str = clean_json_escapes(body_str)
 
-            orig_size = len(body)
             payload_dict = json.loads(body_str, strict=False)
             compacted_dict = process_request_payload(payload_dict, rotation_config)
             body = json.dumps(
                 compacted_dict, ensure_ascii=False, separators=(",", ":")
             ).encode("utf-8")
-            comp_size = len(body)
-
-            saved = orig_size - comp_size
-            pct = (saved / orig_size) * 100 if orig_size > 0 else 0.0
-            logger.info(
-                f"[Compactor] Compacted request context: {orig_size:,} -> {comp_size:,} bytes (Saved {saved:,} B, -{pct:.1f}%)"
-            )
-
-            # Update session-wide statistics in state
-            from proxy_core import state
-
-            state.COMPACTOR_ORIG_BYTES += orig_size
-            state.COMPACTOR_COMP_BYTES += comp_size
         except Exception as ce:
             logger.error(f"[Compactor] Failed to compact context: {ce}")
 
@@ -1055,6 +1128,11 @@ async def _transparent_proxy_attempt(request: Request, path: str):
         current_path = path[13:]
         keys_pool = OLLAMA_CLOUD_KEYS
         provider_name = "ollama_cloud"
+    elif path.startswith("ollama/"):
+        target_base = "https://ollama.com/v1"
+        current_path = path[7:]
+        keys_pool = OLLAMA_CLOUD_KEYS
+        provider_name = "ollama_cloud"
     else:
         target_base = TARGET_BASE_URL
         current_path = path
@@ -1066,11 +1144,19 @@ async def _transparent_proxy_attempt(request: Request, path: str):
     parallel_count = rotation_config.get("parallel_tunnels_count", 3)
     per_channel_delay = rotation_config.get("per_channel_delay", 0.5)
 
-    # Dynamically adjust active slots and backup pool size
-    if len(ACTIVE_SLOTS) != parallel_count:
-        all_channels = list(range(7))
-        ACTIVE_SLOTS = all_channels[:parallel_count]
-        BACKUP_POOL = all_channels[parallel_count:]
+    # Dynamically adjust active slots and backup pool size based on running VPN channels
+    available_channels = [0] + sorted(list(RUNNING_VPN_CHANNELS))
+    # Ensure parallel_count doesn't exceed available channels
+    actual_parallel_count = min(parallel_count, len(available_channels))
+    if actual_parallel_count < 1:
+        actual_parallel_count = 1
+
+    # Re-initialize ACTIVE_SLOTS and BACKUP_POOL if available channels changed or count changed
+    current_pool_set = set(ACTIVE_SLOTS).union(set(BACKUP_POOL))
+    if current_pool_set != set(available_channels) or len(ACTIVE_SLOTS) != actual_parallel_count:
+        ACTIVE_SLOTS = available_channels[:actual_parallel_count]
+        BACKUP_POOL = available_channels[actual_parallel_count:]
+        logger.info(f"[Parallelism] Re-initialized pools: ACTIVE_SLOTS={ACTIVE_SLOTS}, BACKUP_POOL={BACKUP_POOL}")
 
     if parallelism_enabled:
         # Round-robin selection
@@ -1111,9 +1197,13 @@ async def _transparent_proxy_attempt(request: Request, path: str):
     for k, v in config_force_model.items():
         FORCE_MODEL[k] = v
 
-    candidates = rotation_config["rotation_lists"].get(
-        requested_model, [requested_model]
-    )
+    enable_model_rotation = rotation_config.get("enable_model_rotation", False)
+    if enable_model_rotation:
+        candidates = rotation_config["rotation_lists"].get(
+            requested_model, [requested_model]
+        )
+    else:
+        candidates = [requested_model]
     if not candidates:
         candidates = [requested_model]
 
@@ -1212,7 +1302,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 logger.info(
                     f"Dynamically registered LLM7 settings for model '{candidate_model}'"
                 )
-            elif path.startswith("ollama_cloud/"):
+            elif path.startswith("ollama_cloud/") or path.startswith("ollama/"):
                 MODEL_SETTINGS[candidate_model] = {
                     "provider": "ollama_cloud",
                     "base_url": "https://ollama.com/v1",
@@ -1269,6 +1359,8 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     target_path = path[5:]
                 elif path.startswith("ollama_cloud/"):
                     target_path = path[13:]
+                elif path.startswith("ollama/"):
+                    target_path = path[7:]
                 else:
                     target_path = path
 
@@ -1553,6 +1645,18 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                             response_text = "".join(response_text_buffer)
                             raw_req_bytes = body
                             raw_resp_bytes = b"".join(raw_chunks_buffer)
+
+                            # Extract and log token usage
+                            usage = extract_token_usage(raw_resp_bytes)
+                            if usage["total_tokens"] > 0:
+                                cached_str = (
+                                    f", Cached: {usage['cached_tokens']}"
+                                    if usage["cached_tokens"] > 0
+                                    else ""
+                                )
+                                logger.info(
+                                    f"[{candidate_model}] [Usage] Prompt: {usage['prompt_tokens']}, Completion: {usage['completion_tokens']}, Total: {usage['total_tokens']}{cached_str}"
+                                )
 
                             # Always analyze response for anomalies in the background
                             asyncio.create_task(

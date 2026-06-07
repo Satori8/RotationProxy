@@ -105,6 +105,10 @@ def load_rotation_config() -> dict:
                         current_lite_list.append(model)
                         needs_upgrade = True
 
+            if "enable_model_rotation" not in config:
+                config["enable_model_rotation"] = False
+                needs_upgrade = True
+
             if "use_kaggle" not in config:
                 config["use_kaggle"] = USE_KAGGLE
                 needs_upgrade = True
@@ -165,6 +169,7 @@ def load_rotation_config() -> dict:
             "gemini-3.5-flash": target_gemini_35_list,
             "gemini-flash-lite-latest": target_lite_list,
         },
+        "enable_model_rotation": False,
         "use_kaggle": False,
         "force_model": {"gemini-3.5-flash": "auto", "gemini-flash-lite-latest": "auto"},
         "save_chat_logs": False,
