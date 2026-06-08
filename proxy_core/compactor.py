@@ -970,22 +970,37 @@ def process_request_payload(payload_dict, config=None):
         logger.error("[Compactor] ERROR: 'headroom' module is missing! Headroom context compression is disabled.")
 
     if has_tree_sitter:
-        # Monkey-patch tree_sitter Parser.parse to handle bytes vs str issues gracefully
+        # Monkey-patch tree_sitter_language_pack.get_parser to return a SafeParserWrapper
         try:
-            _orig_parse = tree_sitter.Parser.parse
-            def _safe_parse(self, source, *args, **kwargs):
-                if isinstance(source, bytes):
-                    try:
-                        return _orig_parse(self, source, *args, **kwargs)
-                    except TypeError as te:
-                        if "bytes" in str(te) or "str" in str(te):
-                            return _orig_parse(self, source.decode("utf-8", errors="replace"), *args, **kwargs)
-                        raise
-                return _orig_parse(self, source, *args, **kwargs)
-            tree_sitter.Parser.parse = _safe_parse
-            logger.debug("[Compactor] Monkey-patched tree_sitter.Parser.parse to handle bytes vs str gracefully")
+            import tree_sitter_language_pack
+
+            class SafeParserWrapper:
+                def __init__(self, parser):
+                    self._parser = parser
+
+                def parse(self, source, *args, **kwargs):
+                    if isinstance(source, bytes):
+                        try:
+                            return self._parser.parse(source, *args, **kwargs)
+                        except TypeError as te:
+                            if "bytes" in str(te) or "str" in str(te):
+                                return self._parser.parse(source.decode("utf-8", errors="replace"), *args, **kwargs)
+                            raise
+                    return self._parser.parse(source, *args, **kwargs)
+
+                def __getattr__(self, name):
+                    return getattr(self._parser, name)
+
+            _orig_get_parser = tree_sitter_language_pack.get_parser
+
+            def _safe_get_parser(language):
+                parser = _orig_get_parser(language)
+                return SafeParserWrapper(parser)
+
+            tree_sitter_language_pack.get_parser = _safe_get_parser
+            logger.debug("[Compactor] Monkey-patched tree_sitter_language_pack.get_parser to handle bytes vs str gracefully")
         except Exception as e:
-            logger.error(f"[Compactor] Failed to monkey-patch tree_sitter.Parser.parse: {e}")
+            logger.error(f"[Compactor] Failed to monkey-patch tree_sitter_language_pack: {e}")
     else:
         logger.error("[Compactor] ERROR: 'tree_sitter' module is missing! AST monkey-patches are disabled.")
 
