@@ -1918,7 +1918,13 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 continue
 
         if not model_success:
-            rotation_config["model_cooldowns"][candidate_model] = now + 86400.0
+            if enable_model_rotation:
+                rotation_config["model_cooldowns"][candidate_model] = now + 86400.0
+                logger.warning(f"Model '{candidate_model}' failed. Cooldown 24h")
+            else:
+                logger.warning(
+                    f"Model '{candidate_model}' failed. No cooldown applied because model rotation is disabled."
+                )
             rotation_config["consecutive_model_failures"][candidate_model] = 0
 
             current_index = (
@@ -1930,7 +1936,6 @@ async def _transparent_proxy_attempt(request: Request, path: str):
             rotation_config["last_fallback_switch_time"] = now
 
             save_rotation_config(rotation_config)
-            logger.warning(f"Model '{candidate_model}' failed. Cooldown 24h")
 
     logger.error(f"[{requested_model}] [all-keys-failed] [503]")
     return JSONResponse(
