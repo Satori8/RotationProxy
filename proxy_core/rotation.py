@@ -17,7 +17,9 @@ OLLAMA_KEYS_FILE = r"D:\Personal\myvault\90 Private\Sensitive\Ollama Cloud API K
 OLLAMA_CLOUD_KEYS_FILE = (
     r"D:\Personal\myvault\90 Private\Sensitive\Ollama Cloud API Keys.md"
 )
-OPENCODE_KEYS_FILE = r"D:\Personal\myvault\90 Private\Sensitive\OpenCode API Keys.md"
+OPENCODE_KEYS_FILE = (
+    r"D:\Personal\myvault\90 Private\Sensitive\Opencode Zen API Keys.md"
+)
 
 
 def load_keys_from_file(filepath: str) -> list[str]:
