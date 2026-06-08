@@ -3,6 +3,7 @@ import json
 import re
 import random
 import asyncio
+import traceback
 import logging
 import datetime
 from contextlib import asynccontextmanager
@@ -37,6 +38,7 @@ from proxy_core.rotation import (
     LLM7_KEYS,
     OLLAMA_KEYS,
     OLLAMA_CLOUD_KEYS,
+    OPENCODE_KEYS,
     seconds_until_rpd_reset,
     log_non_429_error,
     remove_key_from_error_log,
@@ -781,7 +783,9 @@ async def analyze_response_for_anomalies(
                         content = cand.get("content", {})
                         parts = content.get("parts", [])
                         for part in parts:
-                            if isinstance(part, dict) and ("functionCall" in part or "functionCalls" in part):
+                            if isinstance(part, dict) and (
+                                "functionCall" in part or "functionCalls" in part
+                            ):
                                 has_tool_calls = True
 
                     # Check OpenAI format
@@ -809,7 +813,9 @@ async def analyze_response_for_anomalies(
                             content = cand.get("content", {})
                             parts = content.get("parts", [])
                             for part in parts:
-                                if isinstance(part, dict) and ("functionCall" in part or "functionCalls" in part):
+                                if isinstance(part, dict) and (
+                                    "functionCall" in part or "functionCalls" in part
+                                ):
                                     has_tool_calls = True
                         choices = data.get("choices", [])
                         for choice in choices:
@@ -825,7 +831,9 @@ async def analyze_response_for_anomalies(
         # Check if accumulated text is empty (only if there are no tool calls)
         if not response_text or not response_text.strip():
             if not has_tool_calls:
-                msg = f"Response text is empty or only whitespace (Provider: {provider})."
+                msg = (
+                    f"Response text is empty or only whitespace (Provider: {provider})."
+                )
                 logger.warning(f"[{model}] [Anomaly] {msg}")
                 add_anomaly_to_state(model, msg)
 
@@ -834,7 +842,9 @@ async def analyze_response_for_anomalies(
             if fr not in ("STOP", "NONE", "TOOL_CALLS", "TOOL_CALL"):
                 msg = f"Stream finished with non-standard reason: '{fr}' (Provider: {provider})"
                 logger.warning(f"[{model}] [Anomaly] {msg}")
-                logger.warning(f"[{model}] [Anomaly Raw Response] {raw_response.decode('utf-8', errors='ignore')}")
+                logger.warning(
+                    f"[{model}] [Anomaly Raw Response] {raw_response.decode('utf-8', errors='ignore')}"
+                )
                 add_anomaly_to_state(model, msg)
 
         # Check for format anomalies
@@ -1356,6 +1366,23 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 logger.info(
                     f"Dynamically registered Kaggle settings for model '{candidate_model}' with URL: {KAGGLE_BASE_URL}"
                 )
+            elif candidate_model.startswith("opencode/") or candidate_model.startswith(
+                "opencode_zen/"
+            ):
+                target_model = (
+                    candidate_model[9:]
+                    if candidate_model.startswith("opencode/")
+                    else candidate_model[13:]
+                )
+                MODEL_SETTINGS[candidate_model] = {
+                    "provider": "opencode_zen",
+                    "base_url": "https://opencode.ai/zen/v1",
+                    "keys_pool": OPENCODE_KEYS,
+                    "target_model": target_model,
+                }
+                logger.info(
+                    f"Dynamically registered OpenCode Zen settings for model '{candidate_model}' with target model '{target_model}'"
+                )
             elif candidate_model.startswith("ollama/") or candidate_model.startswith(
                 "ollama_cloud/"
             ):
@@ -1471,6 +1498,10 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     target_path = path[13:]
                 elif path.startswith("ollama/"):
                     target_path = path[7:]
+                elif path.startswith("opencode/"):
+                    target_path = path[9:]
+                elif path.startswith("opencode_zen/"):
+                    target_path = path[13:]
                 else:
                     target_path = path
 
@@ -1564,13 +1595,25 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 )
             }
 
-            if provider_name in ("openrouter", "mistral", "llm7", "ollama_cloud"):
+            if provider_name in (
+                "openrouter",
+                "mistral",
+                "llm7",
+                "ollama_cloud",
+                "opencode_zen",
+            ):
                 headers["authorization"] = f"Bearer {api_key}"
             else:
                 headers["x-goog-api-key"] = api_key
 
             request_body = body
-            if provider_name in ("openrouter", "mistral", "llm7", "ollama_cloud"):
+            if provider_name in (
+                "openrouter",
+                "mistral",
+                "llm7",
+                "ollama_cloud",
+                "opencode_zen",
+            ):
                 try:
                     body_dict = json.loads(body)
                     translated_body = translate_payload_to_openai(
