@@ -230,6 +230,14 @@ def truncate_thought_signature(text: str) -> str:
         return text
 
 
+def beautify_json_string(text: str) -> str:
+    try:
+        parsed = json.loads(text)
+        return json.dumps(parsed, indent=2, ensure_ascii=False)
+    except Exception:
+        return text
+
+
 def track_and_check_safety_limit():
     global RECENT_ERROR_TIMESTAMPS
     now = time.time()
@@ -1040,8 +1048,9 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
         await resp.aclose()
 
         latency_ms = int((time.perf_counter() - start_time) * 1000)
+        beautified_body = beautify_json_string(resp_text)
         logger.info(
-            f"[Test Model] Upstream status: {status_code}, latency: {latency_ms}ms, body: {resp_text}"
+            f"[Test Model] Upstream status: {status_code}, latency: {latency_ms}ms, body:\n{beautified_body}"
         )
 
         if status_code == 200:
@@ -1051,31 +1060,35 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
                 "latency_ms": latency_ms,
             }
         elif status_code == 429:
-            logger.error(f"[Test Model] Rate limit exceeded (429): {resp_text}")
-            global_log_queue.put(f"[Test Model] Rate limit exceeded (429): {resp_text}")
+            logger.error(f"[Test Model] Rate limit exceeded (429):\n{beautified_body}")
+            global_log_queue.put(
+                f"[Test Model] Rate limit exceeded (429):\n{beautified_body}"
+            )
             return {
                 "status": "rate_limited",
-                "message": f"Rate limit exceeded (429): {resp_text}",
+                "message": f"Rate limit exceeded (429):\n{beautified_body}",
                 "latency_ms": latency_ms,
             }
         elif status_code == 404:
-            logger.error(f"[Test Model] Model not found (404): {resp_text}")
-            global_log_queue.put(f"[Test Model] Model not found (404): {resp_text}")
+            logger.error(f"[Test Model] Model not found (404):\n{beautified_body}")
+            global_log_queue.put(
+                f"[Test Model] Model not found (404):\n{beautified_body}"
+            )
             return {
                 "status": "not_found",
-                "message": f"Model not found (404): {resp_text}",
+                "message": f"Model not found (404):\n{beautified_body}",
                 "latency_ms": latency_ms,
             }
         else:
             logger.error(
-                f"[Test Model] Server returned status {status_code}: {resp_text}"
+                f"[Test Model] Server returned status {status_code}:\n{beautified_body}"
             )
             global_log_queue.put(
-                f"[Test Model] Server returned status {status_code}: {resp_text}"
+                f"[Test Model] Server returned status {status_code}:\n{beautified_body}"
             )
             return {
                 "status": "error",
-                "message": f"Server returned status {status_code}: {resp_text}",
+                "message": f"Server returned status {status_code}:\n{beautified_body}",
                 "latency_ms": latency_ms,
             }
     except Exception as e:
