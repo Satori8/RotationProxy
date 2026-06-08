@@ -1757,7 +1757,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
                     # Custom single-line completion log!
                     logger.info(
-                        f"[{candidate_model}] [key#{key_index}-{api_key[-4:]}] [200] [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
+                        f"[{provider_name}] [{candidate_model}] [key#{key_index}-{api_key[-4:]}] [200] [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                     )
 
                     response_headers = {
