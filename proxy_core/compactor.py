@@ -1095,7 +1095,8 @@ def process_request_payload(payload_dict, config=None):
                         content = msg["content"]
                         if isinstance(content, str) and len(content) > 500:
                             res = router.compress(content)
-                            msg["content"] = res.compressed
+                            if len(res.compressed) < len(content):
+                                msg["content"] = res.compressed
             elif "contents" in payload_dict:
                 # Gemini format: compress text parts and functionResponse content fields directly to preserve structure
                 for content in payload_dict["contents"]:
@@ -1106,7 +1107,8 @@ def process_request_payload(payload_dict, config=None):
                                 text = part["text"]
                                 if isinstance(text, str) and len(text) > 500:
                                     res = router.compress(text)
-                                    part["text"] = res.compressed
+                                    if len(res.compressed) < len(text):
+                                        part["text"] = res.compressed
                             elif "functionResponse" in part:
                                 func_resp = part["functionResponse"]
                                 if (
@@ -1121,7 +1123,8 @@ def process_request_payload(payload_dict, config=None):
                                             and len(tool_content) > 500
                                         ):
                                             res = router.compress(tool_content)
-                                            resp["content"] = res.compressed
+                                            if len(res.compressed) < len(tool_content):
+                                                resp["content"] = res.compressed
         except Exception as e:
             import traceback
 
