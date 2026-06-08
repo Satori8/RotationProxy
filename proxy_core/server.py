@@ -1944,9 +1944,9 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
             except Exception as e:
                 logger.error(
-                    f"[{provider_name}] Key #{key_index} conn error ({candidate_model}) on {request.method} {target_url}: {e}"
+                    f"[{provider_name}] Key #{key_index} conn error ({candidate_model}) on {request.method} {target_url}: {type(e).__name__} - {e}\n{traceback.format_exc()}"
                 )
-                log_non_429_error(candidate_model, api_key, str(e))
+                log_non_429_error(candidate_model, api_key, f"{type(e).__name__}: {e}")
                 mark_cooldown(api_key, duration=10.0)
 
                 # Trigger safety check for connection errors
