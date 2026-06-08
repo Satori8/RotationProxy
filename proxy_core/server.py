@@ -1283,6 +1283,23 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 logger.info(
                     f"Dynamically registered Kaggle settings for model '{candidate_model}' with URL: {KAGGLE_BASE_URL}"
                 )
+            elif candidate_model.startswith("ollama/") or candidate_model.startswith(
+                "ollama_cloud/"
+            ):
+                target_model = (
+                    candidate_model[7:]
+                    if candidate_model.startswith("ollama/")
+                    else candidate_model[13:]
+                )
+                MODEL_SETTINGS[candidate_model] = {
+                    "provider": "ollama_cloud",
+                    "base_url": "https://ollama.com/v1",
+                    "keys_pool": OLLAMA_CLOUD_KEYS,
+                    "target_model": target_model,
+                }
+                logger.info(
+                    f"Dynamically registered Ollama Cloud settings for model '{candidate_model}' with target model '{target_model}'"
+                )
             elif (
                 path.startswith("openrouter/")
                 or "/" in candidate_model
