@@ -459,7 +459,7 @@ class ProxyGUI(ctk.CTk):
         self.provider_var = ctk.StringVar(value="OpenRouter")
         self.provider_dropdown = ctk.CTkOptionMenu(
             self.left_manager_frame,
-            values=["OpenRouter", "Ollama", "LLM7", "Mistral"],
+            values=["OpenRouter", "Ollama", "LLM7", "Mistral", "OpenCode Zen"],
             variable=self.provider_var,
             command=self.on_provider_change,
         )
@@ -1087,6 +1087,39 @@ class ProxyGUI(ctk.CTk):
                         self.after(0, lambda: self.render_free_models(models))
                 except Exception as e:
                     logger.error(f"[GUI] Failed to fetch Mistral models: {e}")
+                    self.after(
+                        0,
+                        lambda: self.fetch_btn.configure(
+                            state="normal", text="Fetch Models"
+                        ),
+                    )
+
+            elif provider == "OpenCode Zen":
+                url = "https://opencode.ai/zen/v1/models"
+                try:
+                    from proxy_core.rotation import OPENCODE_KEYS
+
+                    headers = {"User-Agent": "Mozilla/5.0"}
+                    if OPENCODE_KEYS:
+                        headers["Authorization"] = f"Bearer {OPENCODE_KEYS[0]}"
+                    req = urllib.request.Request(url, headers=headers)
+                    with urllib.request.urlopen(req, timeout=8.0) as response:
+                        data = json.loads(response.read().decode("utf-8"))
+                        models = []
+                        for m in data.get("data", []):
+                            models.append(
+                                {
+                                    "id": m.get("id"),
+                                    "name": m.get("id"),
+                                    "context_length": "unknown",
+                                    "provider": "opencode_zen",
+                                }
+                            )
+                        # Sort by id
+                        models = sorted(models, key=lambda x: x["id"])
+                        self.after(0, lambda: self.render_free_models(models))
+                except Exception as e:
+                    logger.error(f"[GUI] Failed to fetch OpenCode Zen models: {e}")
                     self.after(
                         0,
                         lambda: self.fetch_btn.configure(
