@@ -443,32 +443,46 @@ def extract_chat_messages(body: bytes) -> list:
 
 
 def extract_text_from_chunk(chunk_str: str, provider: str) -> str:
-    if provider == "gemini":
-        if chunk_str.startswith("data:"):
-            chunk_str = chunk_str[5:].strip()
+    extracted_texts = []
+    lines = chunk_str.split("\n")
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("data:"):
+            line = line[5:].strip()
+        if line == "[DONE]":
+            continue
         try:
-            data = json.loads(chunk_str)
-            candidates = data.get("candidates", [])
-            if candidates:
-                content = candidates[0].get("content", {})
-                parts = content.get("parts", [])
-                if parts:
-                    return parts[0].get("text", "")
+            data = json.loads(line)
+            if provider == "gemini":
+                candidates = data.get("candidates", [])
+                if candidates:
+                    content = candidates[0].get("content", {})
+                    parts = content.get("parts", [])
+                    if parts:
+                        text = parts[0].get("text", "")
+                        if text:
+                            extracted_texts.append(text)
+            else:
+                choices = data.get("choices", [])
+                if choices:
+                    delta = choices[0].get("delta", {})
+                    if "content" in delta:
+                        content = delta["content"]
+                        if content:
+                            extracted_texts.append(content)
+                    elif "message" in delta:
+                        content = delta["message"].get("content", "")
+                        if content:
+                            extracted_texts.append(content)
+                    elif "message" in choices[0]:
+                        content = choices[0]["message"].get("content", "")
+                        if content:
+                            extracted_texts.append(content)
         except Exception:
             pass
-    else:
-        if chunk_str.startswith("data:"):
-            chunk_str = chunk_str[5:].strip()
-        try:
-            data = json.loads(chunk_str)
-            choices = data.get("choices", [])
-            if choices:
-                delta = choices[0].get("delta", {})
-                if "content" in delta:
-                    return delta["content"]
-        except Exception:
-            pass
-    return ""
+    return "".join(extracted_texts)
 
 
 def extract_token_usage(raw_response: bytes) -> dict:
@@ -1402,6 +1416,11 @@ async def _transparent_proxy_attempt(request: Request, path: str):
         target_model_id = model_settings["target_model"]
 
         is_gemini_client = "generateContent" in path or "models/" in path
+        is_streaming_request = (
+            "streamGenerateContent" in path
+            or "serverSentEvents" in path
+            or query_params.get("alt") == "sse"
+        )
         needs_gemini_response_translation = False
 
         if provider_name == "gemini":
@@ -1538,6 +1557,8 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     translated_body = translate_payload_to_openai(
                         body_dict, target_model_id
                     )
+                    if is_gemini_client and is_streaming_request:
+                        translated_body["stream"] = True
                     request_body = json.dumps(translated_body).encode("utf-8")
                 except Exception as e:
                     logger.warning(

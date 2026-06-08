@@ -270,6 +270,30 @@ def test_headroom_compression():
     print("  -> headroom compression passed!")
 
 
+def test_extract_text_from_chunk():
+    print("Testing extract_text_from_chunk...")
+    from proxy_core.server import extract_text_from_chunk
+
+    # Test 1: Single line SSE chunk
+    chunk = 'data: {"choices": [{"delta": {"content": "Hello"}}]}'
+    assert extract_text_from_chunk(chunk, "ollama_cloud") == "Hello"
+
+    # Test 2: Multi-line SSE chunk
+    chunk_multi = 'data: {"choices": [{"delta": {"content": "Hello"}}]}\n\ndata: {"choices": [{"delta": {"content": " World"}}]}'
+    assert extract_text_from_chunk(chunk_multi, "ollama_cloud") == "Hello World"
+
+    # Test 3: Non-streaming OpenAI chunk (message instead of delta)
+    chunk_non_stream = '{"choices": [{"message": {"content": "Hello Non-Stream"}}]}'
+    assert extract_text_from_chunk(chunk_non_stream, "ollama_cloud") == "Hello Non-Stream"
+
+    # Test 4: Gemini SSE chunk
+    chunk_gemini = 'data: {"candidates": [{"content": {"parts": [{"text": "Hello Gemini"}]}}]}'
+    assert extract_text_from_chunk(chunk_gemini, "gemini") == "Hello Gemini"
+
+    print("  -> extract_text_from_chunk passed!")
+
+
+
 if __name__ == "__main__":
     print("=== RUNNING COMPACTOR TESTS ===")
     try:
@@ -281,6 +305,7 @@ if __name__ == "__main__":
         test_inject_tool_guardrails()
         test_process_request_payload()
         test_headroom_compression()
+        test_extract_text_from_chunk()
         print("\n=== ALL TESTS PASSED SUCCESSFULLY! ===")
         sys.exit(0)
     except AssertionError as e:
