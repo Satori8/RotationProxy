@@ -195,6 +195,71 @@ COMPACTED_TOOLS = {
 }
 
 
+# ЧЕРНЫЙ СПИСОК: Эти инструменты будут полностью вырезаны из промпта
+BANNED_COMPRESSED_TOOLS = {
+    # 1. Избыточные академические и метрические утилиты tokensave (БЛОКИРУЕМ)
+    "tokensave_gini", "tokensave_complexity", "tokensave_god_class", 
+    "tokensave_coupling", "tokensave_dsm", "tokensave_circular", 
+    "tokensave_recursion", "tokensave_redundancy", "tokensave_health", 
+    "tokensave_hotspots", "tokensave_distribution", "tokensave_largest",
+    "tokensave_dependency_depth", "tokensave_inheritance_depth", 
+    "tokensave_test_risk", "tokensave_doc_coverage", "tokensave_runtime",
+    "tokensave_diagnose", "tokensave_simplify_scan",
+    
+    # 2. Неиспользуемые или дублирующиеся гит- и вспомогательные утилиты tokensave (БЛОКИРУЕМ)
+    "tokensave_port_order", "tokensave_port_status", "tokensave_branch_list", 
+    "tokensave_branch_search", "tokensave_branch_diff", "tokensave_commit_context", 
+    "tokensave_pr_context", "tokensave_session_start", "tokensave_session_end",
+    "tokensave_record_code_area", "tokensave_test_map", "tokensave_config",
+    "tokensave_signature_search", "tokensave_type_hierarchy", "tokensave_run_affected_tests",
+    "tokensave_callers_for", "tokensave_derives", "tokensave_impls", "tokensave_similar", 
+    "tokensave_call_chain", "tokensave_node", "tokensave_status",
+    
+    # 3. Дублирующиеся инструменты чтения (БЛОКИРУЕМ - полностью заменены на ctx_read)
+    "tokensave_read", "tokensave_files", "tokensave_context",
+    
+    # 4. Тяжелые или ненужные утилиты из lean-ctx (БЛОКИРУЕМ)
+    "ctx_architecture", "ctx_agent", "ctx_compress", "ctx_pack", "ctx_refactor", "ctx_edit", "shell"
+}
+
+
+def prune_mcp_xml_descriptions(tools_payload, blacklist=BANNED_COMPRESSED_TOOLS):
+    """
+    Парсит описание мета-инструментов get_tool_schema и удаляет из XML-списка
+    все инструменты, входящие в черный список (blacklist).
+    """
+    if not tools_payload:
+        return tools_payload
+
+    for tool_entry in tools_payload:
+        funcs = []
+        if "function" in tool_entry:
+            funcs = [tool_entry["function"]]
+        elif "functionDeclarations" in tool_entry:
+            funcs = tool_entry["functionDeclarations"]
+
+        for func in funcs:
+            desc = func.get("description", "")
+            if desc and "Available tools are:" in desc:
+                # Находим все блоки вида <tool>имя_инструмента(...)</tool>
+                # Используем улучшенный регулярный паттерн для максимальной надежности
+                blocks = re.findall(r"(<tool>([\w-]+)(?:\(.*?\))?.*?</tool>)", desc, re.DOTALL)
+                if not blocks:
+                    continue
+                
+                header = desc.split("Available tools are:")[0].strip()
+                new_desc_lines = [header, "\n\nAvailable tools are:"]
+                
+                for full_block, tool_name in blocks:
+                    # Если имя инструмента НЕ в черном списке — мы его оставляем!
+                    if tool_name.strip() not in blacklist:
+                        new_desc_lines.append(full_block)
+                
+                func["description"] = "\n".join(new_desc_lines)
+                
+    return tools_payload
+
+
 def compact_tools_with_static_map(data):
     """Compact tool descriptions using the static map."""
     if "tools" not in data:
@@ -237,6 +302,10 @@ def compact_tools_with_static_map(data):
                             param_obj = func["parameters"]["properties"][param_name]
                             if isinstance(param_obj, dict):
                                 param_obj["description"] = new_desc
+
+    # Prune MCP XML descriptions to filter out banned/unwanted tools
+    data["tools"] = prune_mcp_xml_descriptions(data["tools"])
+
     return data
 
 
