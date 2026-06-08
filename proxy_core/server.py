@@ -816,6 +816,7 @@ async def analyze_response_for_anomalies(
             if fr not in ("STOP", "NONE"):
                 msg = f"Stream finished with non-standard reason: '{fr}' (Provider: {provider})"
                 logger.warning(f"[{model}] [Anomaly] {msg}")
+                logger.warning(f"[{model}] [Anomaly Raw Response] {raw_response.decode('utf-8', errors='ignore')}")
                 add_anomaly_to_state(model, msg)
 
         # Check for format anomalies
