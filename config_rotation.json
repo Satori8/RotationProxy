@@ -1,10 +1,13 @@
 {
-  "last_fallback_switch_time": 1780533778.2173328,
+  "last_fallback_switch_time": 1780945522.748025,
   "model_cooldowns": {},
-  "consecutive_model_failures": {},
+  "consecutive_model_failures": {
+    "gemini-3.5-flash": 0
+  },
   "rotation_lists": {
     "gemini-3.5-flash": [
       "gemini-3.5-flash",
+      "ollama/minimax-m3",
       "gemini-3-flash-preview",
       "openrouter/owl-alpha",
       "deepseek/deepseek-v4-flash:free",
@@ -25,10 +28,10 @@
   },
   "use_kaggle": false,
   "force_model": {
-    "gemini-3.5-flash": "auto",
+    "gemini-3.5-flash": "gemini-3.5-flash",
     "gemini-flash-lite-latest": "auto"
   },
-  "save_chat_logs": true,
+  "save_chat_logs": false,
   "vpn_switching_mode": "error_threshold",
   "vpn_static_channel": 0,
   "vpn_errors_threshold": 3,
@@ -40,5 +43,14 @@
   "per_channel_delay": 0.5,
   "filter_context": true,
   "connect_timeout": 15.0,
-  "read_timeout": 120.0
+  "read_timeout": 120.0,
+  "enable_model_rotation": false,
+  "compactor_compact_tools": true,
+  "compactor_compact_superpowers": true,
+  "compactor_compact_skills": true,
+  "compactor_compact_devctx": true,
+  "compactor_block_generic_read": true,
+  "compactor_move_reminders": true,
+  "compactor_inject_guardrails": false,
+  "compactor_enable_headroom": true
 }

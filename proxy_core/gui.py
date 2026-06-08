@@ -24,6 +24,7 @@ from proxy_core.config import (
     save_kaggle_url,
 )
 from proxy_core.state import log_queue
+from proxy_core.helpers import beautify_json_string
 import logging
 
 logger = logging.getLogger("proxy")
@@ -958,7 +959,9 @@ class ProxyGUI(ctk.CTk):
                         url, headers={"User-Agent": "Mozilla/5.0"}
                     )
                     with urllib.request.urlopen(req, timeout=8.0) as response:
-                        data = json.loads(response.read().decode("utf-8"))
+                        raw_data = response.read().decode("utf-8")
+                        logger.info(f"[GUI] OpenRouter models response:\n{beautify_json_string(raw_data)}")
+                        data = json.loads(raw_data)
                         free_models = []
                         for m in data.get("data", []):
                             pricing = m.get("pricing", {})
@@ -999,7 +1002,9 @@ class ProxyGUI(ctk.CTk):
                         headers["Authorization"] = f"Bearer {OLLAMA_CLOUD_KEYS[0]}"
                     req = urllib.request.Request(url, headers=headers)
                     with urllib.request.urlopen(req, timeout=8.0) as response:
-                        data = json.loads(response.read().decode("utf-8"))
+                        raw_data = response.read().decode("utf-8")
+                        logger.info(f"[GUI] Ollama models response:\n{beautify_json_string(raw_data)}")
+                        data = json.loads(raw_data)
                         models = []
                         for m in data.get("data", []):
                             models.append(
@@ -1032,7 +1037,9 @@ class ProxyGUI(ctk.CTk):
                         headers["Authorization"] = f"Bearer {LLM7_KEYS[0]}"
                     req = urllib.request.Request(url, headers=headers)
                     with urllib.request.urlopen(req, timeout=8.0) as response:
-                        data = json.loads(response.read().decode("utf-8"))
+                        raw_data = response.read().decode("utf-8")
+                        logger.info(f"[GUI] LLM7 models response:\n{beautify_json_string(raw_data)}")
+                        data = json.loads(raw_data)
                         models = []
                         # Since LLM7 returns a list directly
                         for m in data:
@@ -1071,7 +1078,9 @@ class ProxyGUI(ctk.CTk):
                         headers["Authorization"] = f"Bearer {MISTRAL_KEYS[0]}"
                     req = urllib.request.Request(url, headers=headers)
                     with urllib.request.urlopen(req, timeout=8.0) as response:
-                        data = json.loads(response.read().decode("utf-8"))
+                        raw_data = response.read().decode("utf-8")
+                        logger.info(f"[GUI] Mistral models response:\n{beautify_json_string(raw_data)}")
+                        data = json.loads(raw_data)
                         models = []
                         for m in data.get("data", []):
                             models.append(
@@ -1104,7 +1113,9 @@ class ProxyGUI(ctk.CTk):
                         headers["Authorization"] = f"Bearer {OPENCODE_KEYS[0]}"
                     req = urllib.request.Request(url, headers=headers)
                     with urllib.request.urlopen(req, timeout=8.0) as response:
-                        data = json.loads(response.read().decode("utf-8"))
+                        raw_data = response.read().decode("utf-8")
+                        logger.info(f"[GUI] OpenCode Zen models response:\n{beautify_json_string(raw_data)}")
+                        data = json.loads(raw_data)
                         models = []
                         for m in data.get("data", []):
                             models.append(

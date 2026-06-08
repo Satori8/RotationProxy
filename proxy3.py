@@ -31,18 +31,38 @@ if __name__ == "__main__":
 
     if args.gui:
         import os
+        import traceback
 
         os.environ["GEMINI_PROXY_PROCESS"] = "gui"
         # Load CustomTkinter dynamically to save start-up overhead if running CLI server
-        import customtkinter as ctk
-        from proxy_core.gui import ProxyGUI
+        try:
+            import customtkinter as ctk
+            from proxy_core.gui import ProxyGUI
 
-        ctk.set_appearance_mode("Dark")
-        ctk.set_default_color_theme("blue")
+            ctk.set_appearance_mode("Dark")
+            ctk.set_default_color_theme("blue")
 
-        gui_app = ProxyGUI(host=args.host, port=args.port, reload=args.reload)
-
-        gui_app.mainloop()
+            gui_app = ProxyGUI(host=args.host, port=args.port, reload=args.reload)
+            gui_app.mainloop()
+        except Exception:
+            tb = traceback.format_exc()
+            print("[FATAL] GUI initialization failed:", file=sys.stderr)
+            print(tb, file=sys.stderr)
+            crash_log = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "gui_crash.log"
+            )
+            try:
+                with open(crash_log, "w", encoding="utf-8") as f:
+                    f.write("GUI CRASH REPORT\n")
+                    f.write("================\n")
+                    f.write(f"Python: {sys.version}\n")
+                    f.write(f"Platform: {sys.platform}\n")
+                    f.write(f"Args: {args}\n\n")
+                    f.write(tb)
+                print(f"[FATAL] Crash report written to {crash_log}", file=sys.stderr)
+            except Exception:
+                pass
+            sys.exit(1)
     else:
         import os
 
