@@ -1203,31 +1203,49 @@ async def _transparent_proxy_attempt(request: Request, path: str):
         except Exception as ce:
             logger.error(f"[Compactor] Failed to compact context: {ce}")
 
+    explicit_provider = None
     if path.startswith("openrouter/"):
         target_base = "https://openrouter.ai/api/v1"
         current_path = path[11:]
         keys_pool = OPENROUTER_KEYS
         provider_name = "openrouter"
+        explicit_provider = "openrouter"
     elif path.startswith("mistral/"):
         target_base = "https://api.mistral.ai/v1"
         current_path = path[8:]
         keys_pool = MISTRAL_KEYS
         provider_name = "mistral"
+        explicit_provider = "mistral"
     elif path.startswith("llm7/"):
         target_base = "https://api.llm7.io/v1"
         current_path = path[5:]
         keys_pool = LLM7_KEYS
         provider_name = "llm7"
+        explicit_provider = "llm7"
     elif path.startswith("ollama_cloud/"):
         target_base = "https://ollama.com/v1"
         current_path = path[13:]
         keys_pool = OLLAMA_CLOUD_KEYS
         provider_name = "ollama_cloud"
+        explicit_provider = "ollama_cloud"
     elif path.startswith("ollama/"):
         target_base = "https://ollama.com/v1"
         current_path = path[7:]
         keys_pool = OLLAMA_CLOUD_KEYS
         provider_name = "ollama_cloud"
+        explicit_provider = "ollama_cloud"
+    elif path.startswith("opencode_zen/"):
+        target_base = "https://opencode.ai/zen/v1"
+        current_path = path[13:]
+        keys_pool = OPENCODE_KEYS
+        provider_name = "opencode_zen"
+        explicit_provider = "opencode_zen"
+    elif path.startswith("opencode/"):
+        target_base = "https://opencode.ai/zen/v1"
+        current_path = path[9:]
+        keys_pool = OPENCODE_KEYS
+        provider_name = "opencode_zen"
+        explicit_provider = "opencode_zen"
     else:
         target_base = TARGET_BASE_URL
         current_path = path
@@ -1459,7 +1477,44 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     f"Dynamically registered Gemini settings for model '{candidate_model}'"
                 )
 
-        model_settings = MODEL_SETTINGS[candidate_model]
+        if explicit_provider == "openrouter":
+            model_settings = {
+                "provider": "openrouter",
+                "base_url": "https://openrouter.ai/api/v1",
+                "keys_pool": OPENROUTER_KEYS,
+                "target_model": candidate_model,
+            }
+        elif explicit_provider == "mistral":
+            model_settings = {
+                "provider": "mistral",
+                "base_url": "https://api.mistral.ai/v1",
+                "keys_pool": MISTRAL_KEYS,
+                "target_model": candidate_model,
+            }
+        elif explicit_provider == "llm7":
+            model_settings = {
+                "provider": "llm7",
+                "base_url": "https://api.llm7.io/v1",
+                "keys_pool": LLM7_KEYS,
+                "target_model": candidate_model,
+            }
+        elif explicit_provider == "ollama_cloud":
+            model_settings = {
+                "provider": "ollama_cloud",
+                "base_url": "https://ollama.com/v1",
+                "keys_pool": OLLAMA_CLOUD_KEYS,
+                "target_model": candidate_model,
+            }
+        elif explicit_provider == "opencode_zen":
+            model_settings = {
+                "provider": "opencode_zen",
+                "base_url": "https://opencode.ai/zen/v1",
+                "keys_pool": OPENCODE_KEYS,
+                "target_model": candidate_model,
+            }
+        else:
+            model_settings = MODEL_SETTINGS[candidate_model]
+
         provider_name = model_settings["provider"]
         target_base_url = model_settings["base_url"]
         keys_pool = model_settings["keys_pool"]
