@@ -1046,7 +1046,13 @@ def process_request_payload(payload_dict, config=None):
                             raise
                     return self._parser.parse(source, *args, **kwargs)
 
-                def __getattr__(self, name):
+                def __getattr__(
+                    self, name
+                ):  # Prevent infinite recursion on inspection/copying
+                    if (
+                        name == "_parser"
+                    ):  # Explicitly block access to _parser via getattr
+                        raise AttributeError  # This prevents recursion when tree-sitter inspects the wrapper
                     return getattr(self._parser, name)
 
             _orig_get_parser = tree_sitter_language_pack.get_parser
