@@ -348,6 +348,15 @@ def get_session_id(request: Request) -> str:
 
 
 def get_requested_model(path: str, body: bytes) -> str:
+    # 1. Try to extract model from Gemini path (e.g., models/gemini-2.5-flash:generateContent)
+    match = re.search(r"models/([^:/]+)", path)
+    if match:
+        model_name = match.group(1)
+        if model_name == "gemini-2.0-flash-lite":
+            return "gemini-flash-lite-latest"
+        return model_name
+
+    # 2. Fall back to explicit path checks
     if "gemini-flash-lite-latest" in path or "gemini-2.0-flash-lite" in path:
         return "gemini-flash-lite-latest"
     if "gemini-3-flash-preview" in path:
@@ -355,6 +364,7 @@ def get_requested_model(path: str, body: bytes) -> str:
     if "gemini-3.5-flash" in path:
         return "gemini-3.5-flash"
 
+    # 3. Try to extract from JSON body
     try:
         data = json.loads(body)
         if isinstance(data, dict) and "model" in data:
@@ -1153,10 +1163,15 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
     # Re-initialize ACTIVE_SLOTS and BACKUP_POOL if available channels changed or count changed
     current_pool_set = set(ACTIVE_SLOTS).union(set(BACKUP_POOL))
-    if current_pool_set != set(available_channels) or len(ACTIVE_SLOTS) != actual_parallel_count:
+    if (
+        current_pool_set != set(available_channels)
+        or len(ACTIVE_SLOTS) != actual_parallel_count
+    ):
         ACTIVE_SLOTS = available_channels[:actual_parallel_count]
         BACKUP_POOL = available_channels[actual_parallel_count:]
-        logger.info(f"[Parallelism] Re-initialized pools: ACTIVE_SLOTS={ACTIVE_SLOTS}, BACKUP_POOL={BACKUP_POOL}")
+        logger.info(
+            f"[Parallelism] Re-initialized pools: ACTIVE_SLOTS={ACTIVE_SLOTS}, BACKUP_POOL={BACKUP_POOL}"
+        )
 
     if parallelism_enabled:
         # Round-robin selection
