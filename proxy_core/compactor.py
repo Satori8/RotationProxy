@@ -10,7 +10,9 @@ try:
 except ImportError:
     logger.error("=" * 80)
     logger.error("CRITICAL SYSTEM ERROR: 'headroom' module is NOT installed!")
-    logger.error("Headroom context compression will NOT work. Please run with 'uv run --with headroom-ai[all]'.")
+    logger.error(
+        "Headroom context compression will NOT work. Please run with 'uv run --with headroom-ai[all]'."
+    )
     logger.error("=" * 80)
 
 try:
@@ -198,28 +200,60 @@ COMPACTED_TOOLS = {
 # ЧЕРНЫЙ СПИСОК: Эти инструменты будут полностью вырезаны из промпта
 BANNED_COMPRESSED_TOOLS = {
     # 1. Избыточные академические и метрические утилиты tokensave (БЛОКИРУЕМ)
-    "tokensave_gini", "tokensave_complexity", "tokensave_god_class", 
-    "tokensave_coupling", "tokensave_dsm", "tokensave_circular", 
-    "tokensave_recursion", "tokensave_redundancy", "tokensave_health", 
-    "tokensave_hotspots", "tokensave_distribution", "tokensave_largest",
-    "tokensave_dependency_depth", "tokensave_inheritance_depth", 
-    "tokensave_test_risk", "tokensave_doc_coverage", "tokensave_runtime",
-    "tokensave_diagnose", "tokensave_simplify_scan",
-    
+    "tokensave_gini",
+    "tokensave_complexity",
+    "tokensave_god_class",
+    "tokensave_coupling",
+    "tokensave_dsm",
+    "tokensave_circular",
+    "tokensave_recursion",
+    "tokensave_redundancy",
+    "tokensave_health",
+    "tokensave_hotspots",
+    "tokensave_distribution",
+    "tokensave_largest",
+    "tokensave_dependency_depth",
+    "tokensave_inheritance_depth",
+    "tokensave_test_risk",
+    "tokensave_doc_coverage",
+    "tokensave_runtime",
+    "tokensave_diagnose",
+    "tokensave_simplify_scan",
     # 2. Неиспользуемые или дублирующиеся гит- и вспомогательные утилиты tokensave (БЛОКИРУЕМ)
-    "tokensave_port_order", "tokensave_port_status", "tokensave_branch_list", 
-    "tokensave_branch_search", "tokensave_branch_diff", "tokensave_commit_context", 
-    "tokensave_pr_context", "tokensave_session_start", "tokensave_session_end",
-    "tokensave_record_code_area", "tokensave_test_map", "tokensave_config",
-    "tokensave_signature_search", "tokensave_type_hierarchy", "tokensave_run_affected_tests",
-    "tokensave_callers_for", "tokensave_derives", "tokensave_impls", "tokensave_similar", 
-    "tokensave_call_chain", "tokensave_node", "tokensave_status",
-    
+    "tokensave_port_order",
+    "tokensave_port_status",
+    "tokensave_branch_list",
+    "tokensave_branch_search",
+    "tokensave_branch_diff",
+    "tokensave_commit_context",
+    "tokensave_pr_context",
+    "tokensave_session_start",
+    "tokensave_session_end",
+    "tokensave_record_code_area",
+    "tokensave_test_map",
+    "tokensave_config",
+    "tokensave_signature_search",
+    "tokensave_type_hierarchy",
+    "tokensave_run_affected_tests",
+    "tokensave_callers_for",
+    "tokensave_derives",
+    "tokensave_impls",
+    "tokensave_similar",
+    "tokensave_call_chain",
+    "tokensave_node",
+    "tokensave_status",
     # 3. Дублирующиеся инструменты чтения (БЛОКИРУЕМ - полностью заменены на ctx_read)
-    "tokensave_read", "tokensave_files", "tokensave_context",
-    
+    "tokensave_read",
+    "tokensave_files",
+    "tokensave_context",
     # 4. Тяжелые или ненужные утилиты из lean-ctx (БЛОКИРУЕМ)
-    "ctx_architecture", "ctx_agent", "ctx_compress", "ctx_pack", "ctx_refactor", "ctx_edit", "shell"
+    "ctx_architecture",
+    "ctx_agent",
+    "ctx_compress",
+    "ctx_pack",
+    "ctx_refactor",
+    "ctx_edit",
+    "shell",
 }
 
 
@@ -243,20 +277,22 @@ def prune_mcp_xml_descriptions(tools_payload, blacklist=BANNED_COMPRESSED_TOOLS)
             if desc and "Available tools are:" in desc:
                 # Находим все блоки вида <tool>имя_инструмента(...)</tool>
                 # Используем улучшенный регулярный паттерн для максимальной надежности
-                blocks = re.findall(r"(<tool>([\w-]+)(?:\(.*?\))?.*?</tool>)", desc, re.DOTALL)
+                blocks = re.findall(
+                    r"(<tool>([\w-]+)(?:\(.*?\))?.*?</tool>)", desc, re.DOTALL
+                )
                 if not blocks:
                     continue
-                
+
                 header = desc.split("Available tools are:")[0].strip()
                 new_desc_lines = [header, "\n\nAvailable tools are:"]
-                
+
                 for full_block, tool_name in blocks:
                     # Если имя инструмента НЕ в черном списке — мы его оставляем!
                     if tool_name.strip() not in blacklist:
                         new_desc_lines.append(full_block)
-                
+
                 func["description"] = "\n".join(new_desc_lines)
-                
+
     return tools_payload
 
 
@@ -909,6 +945,7 @@ def process_request_payload(payload_dict, config=None):
     has_headroom = False
     try:
         import headroom
+
         has_headroom = True
     except ImportError:
         pass
@@ -917,6 +954,7 @@ def process_request_payload(payload_dict, config=None):
     has_tree_sitter = False
     try:
         import tree_sitter
+
         has_tree_sitter = True
     except ImportError:
         pass
@@ -937,20 +975,29 @@ def process_request_payload(payload_dict, config=None):
         # Monkey-patch CodeLanguage to handle unknown languages (like 'dot') gracefully
         try:
             from headroom.transforms.code_compressor import CodeLanguage
+
             _orig_new = CodeLanguage.__new__
+
             def _safe_new(cls, value):
                 try:
                     return _orig_new(cls, value)
                 except ValueError:
                     return CodeLanguage.UNKNOWN
+
             CodeLanguage.__new__ = _safe_new
-            logger.debug("[Compactor] Monkey-patched CodeLanguage to handle unknown languages gracefully")
+            logger.debug(
+                "[Compactor] Monkey-patched CodeLanguage to handle unknown languages gracefully"
+            )
         except Exception as e:
             logger.error(f"[Compactor] Failed to monkey-patch CodeLanguage: {e}")
 
         # Monkey-patch CodeAwareCompressor._fallback_compress to prevent slow ONNX model loading/inference
         try:
-            from headroom.transforms.code_compressor import CodeAwareCompressor, CodeCompressionResult
+            from headroom.transforms.code_compressor import (
+                CodeAwareCompressor,
+                CodeCompressionResult,
+            )
+
             def _safe_fallback_compress(self, code: str, original_tokens: int):
                 return CodeCompressionResult(
                     compressed=code,
@@ -962,12 +1009,19 @@ def process_request_payload(payload_dict, config=None):
                     language_confidence=0.0,
                     syntax_valid=True,
                 )
+
             CodeAwareCompressor._fallback_compress = _safe_fallback_compress
-            logger.debug("[Compactor] Monkey-patched CodeAwareCompressor._fallback_compress to disable slow ONNX fallback")
+            logger.debug(
+                "[Compactor] Monkey-patched CodeAwareCompressor._fallback_compress to disable slow ONNX fallback"
+            )
         except Exception as e:
-            logger.error(f"[Compactor] Failed to monkey-patch CodeAwareCompressor fallback: {e}")
+            logger.error(
+                f"[Compactor] Failed to monkey-patch CodeAwareCompressor fallback: {e}"
+            )
     else:
-        logger.error("[Compactor] ERROR: 'headroom' module is missing! Headroom context compression is disabled.")
+        logger.error(
+            "[Compactor] ERROR: 'headroom' module is missing! Headroom context compression is disabled."
+        )
 
     if has_tree_sitter:
         # Monkey-patch tree_sitter_language_pack.get_parser to return a SafeParserWrapper
@@ -984,7 +1038,11 @@ def process_request_payload(payload_dict, config=None):
                             return self._parser.parse(source, *args, **kwargs)
                         except TypeError as te:
                             if "bytes" in str(te) or "str" in str(te):
-                                return self._parser.parse(source.decode("utf-8", errors="replace"), *args, **kwargs)
+                                return self._parser.parse(
+                                    source.decode("utf-8", errors="replace"),
+                                    *args,
+                                    **kwargs,
+                                )
                             raise
                     return self._parser.parse(source, *args, **kwargs)
 
@@ -998,16 +1056,26 @@ def process_request_payload(payload_dict, config=None):
                 return SafeParserWrapper(parser)
 
             tree_sitter_language_pack.get_parser = _safe_get_parser
-            logger.debug("[Compactor] Monkey-patched tree_sitter_language_pack.get_parser to handle bytes vs str gracefully")
+            logger.debug(
+                "[Compactor] Monkey-patched tree_sitter_language_pack.get_parser to handle bytes vs str gracefully"
+            )
         except Exception as e:
-            logger.error(f"[Compactor] Failed to monkey-patch tree_sitter_language_pack: {e}")
+            logger.error(
+                f"[Compactor] Failed to monkey-patch tree_sitter_language_pack: {e}"
+            )
     else:
-        logger.error("[Compactor] ERROR: 'tree_sitter' module is missing! AST monkey-patches are disabled.")
+        logger.error(
+            "[Compactor] ERROR: 'tree_sitter' module is missing! AST monkey-patches are disabled."
+        )
 
     # 8. Headroom compression strictly after our local message compaction
     if has_headroom and config.get("compactor_enable_headroom", True):
         try:
-            from headroom.transforms.content_router import ContentRouter, ContentRouterConfig, CompressionStrategy
+            from headroom.transforms.content_router import (
+                ContentRouter,
+                ContentRouterConfig,
+                CompressionStrategy,
+            )
 
             # Configure ContentRouter to disable slow ONNX-based Kompress ML model,
             # preventing 2+ second delays while keeping fast SmartCrusher active for JSON
@@ -1041,15 +1109,25 @@ def process_request_payload(payload_dict, config=None):
                                     part["text"] = res.compressed
                             elif "functionResponse" in part:
                                 func_resp = part["functionResponse"]
-                                if isinstance(func_resp, dict) and "response" in func_resp:
+                                if (
+                                    isinstance(func_resp, dict)
+                                    and "response" in func_resp
+                                ):
                                     resp = func_resp["response"]
                                     if isinstance(resp, dict) and "content" in resp:
                                         tool_content = resp["content"]
-                                        if isinstance(tool_content, str) and len(tool_content) > 500:
+                                        if (
+                                            isinstance(tool_content, str)
+                                            and len(tool_content) > 500
+                                        ):
                                             res = router.compress(tool_content)
                                             resp["content"] = res.compressed
         except Exception as e:
-            logger.error(f"Error in headroom compression: {e}")
+            import traceback
+
+            logger.error(
+                f"Error in headroom compression: {e}\n{traceback.format_exc()}"
+            )
 
     # Stage 3: After headroom compression (final)
     final_bytes, final_tokens = get_metrics(payload_dict)

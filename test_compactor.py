@@ -253,7 +253,11 @@ def test_process_request_payload():
 def test_headroom_compression():
     print("Testing headroom compression...")
     # Use a JSON array to test smart_crusher compression (which remains active when enable_kompress=False)
-    json_array = "[" + ",".join(['{"id": ' + str(i) + ', "name": "Alice"}' for i in range(100)]) + "]"
+    json_array = (
+        "["
+        + ",".join(['{"id": ' + str(i) + ', "name": "Alice"}' for i in range(100)])
+        + "]"
+    )
     payload = {"contents": [{"role": "user", "parts": [{"text": json_array}]}]}
     compacted = process_request_payload(payload)
     compacted_text = compacted["contents"][0]["parts"][0]["text"]
