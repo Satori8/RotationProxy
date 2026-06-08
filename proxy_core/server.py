@@ -231,7 +231,7 @@ def track_and_check_safety_limit():
             "More than 3 model/server errors occurred within 2.0 seconds!\n"
             f"Error timestamps in window: {[datetime.datetime.fromtimestamp(t).strftime('%H:%M:%S.%f')[:-3] for t in RECENT_ERROR_TIMESTAMPS]}\n"
             "Something is seriously wrong (e.g., network down, invalid keys, or API block).\n"
-            "SHUTTING DOWN PROXY SERVER IMMEDIATELY TO PREVENT INFINITE ERROR LOOPS...\n"
+            "ABORTING CURRENT REQUEST TO PREVENT INFINITE ERROR LOOPS...\n"
             + "=" * 80
             + "\n"
         )
@@ -239,16 +239,7 @@ def track_and_check_safety_limit():
         logger.critical(banner)
         global_log_queue.put(banner)
 
-        # Shutdown the server process
-        import os
-        import signal
-
-        try:
-            # Try graceful SIGTERM first
-            os.kill(os.getpid(), signal.SIGTERM)
-        except Exception:
-            # Fallback to immediate exit
-            os._exit(1)
+        raise RuntimeError("CRITICAL SAFETY STOP: High error rate detected. Aborting current request.")
 
 
 PRIMARY_MODEL = "gemini-3.5-flash"
