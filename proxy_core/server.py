@@ -211,6 +211,44 @@ queue_handler = QueueLogHandler()
 queue_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
 logger.addHandler(queue_handler)
 
+RECENT_ERROR_TIMESTAMPS = []
+
+
+def track_and_check_safety_limit():
+    global RECENT_ERROR_TIMESTAMPS
+    now = time.time()
+    RECENT_ERROR_TIMESTAMPS.append(now)
+    # Keep only errors from the last 2.0 seconds
+    RECENT_ERROR_TIMESTAMPS = [t for t in RECENT_ERROR_TIMESTAMPS if now - t <= 2.0]
+
+    if len(RECENT_ERROR_TIMESTAMPS) > 3:
+        # Massive, highly visible warning message
+        banner = (
+            "\n" + "=" * 80 + "\n"
+            "!!! CRITICAL SAFETY STOP TRIGGERED !!!\n"
+            "More than 3 model/server errors occurred within 2.0 seconds!\n"
+            f"Error timestamps in window: {[datetime.datetime.fromtimestamp(t).strftime('%H:%M:%S.%f')[:-3] for t in RECENT_ERROR_TIMESTAMPS]}\n"
+            "Something is seriously wrong (e.g., network down, invalid keys, or API block).\n"
+            "SHUTTING DOWN PROXY SERVER IMMEDIATELY TO PREVENT INFINITE ERROR LOOPS...\n"
+            + "=" * 80
+            + "\n"
+        )
+
+        logger.critical(banner)
+        global_log_queue.put(banner)
+
+        # Shutdown the server process
+        import os
+        import signal
+
+        try:
+            # Try graceful SIGTERM first
+            os.kill(os.getpid(), signal.SIGTERM)
+        except Exception:
+            # Fallback to immediate exit
+            os._exit(1)
+
+
 PRIMARY_MODEL = "gemini-3.5-flash"
 FALLBACK_MODEL = "gemini-3-flash-preview"
 RETRY_DELAY_SECONDS = 90
@@ -1729,6 +1767,9 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         resp_text = f"<Failed to read response body: {re}>"
                     await response.aclose()
 
+                    # Trigger safety check for model/server errors
+                    track_and_check_safety_limit()
+
                     if response.status_code == 429:
                         if parallelism_enabled:
                             failed_channel = ACTIVE_SLOTS[slot_idx]
@@ -1885,6 +1926,9 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 )
                 log_non_429_error(candidate_model, api_key, str(e))
                 mark_cooldown(api_key, duration=10.0)
+
+                # Trigger safety check for connection errors
+                track_and_check_safety_limit()
 
                 # VPN Integration: Track consecutive connection errors / timeouts
                 try:
