@@ -239,7 +239,9 @@ def track_and_check_safety_limit():
         logger.critical(banner)
         global_log_queue.put(banner)
 
-        raise RuntimeError("CRITICAL SAFETY STOP: High error rate detected. Aborting current request.")
+        raise RuntimeError(
+            "CRITICAL SAFETY STOP: High error rate detected. Aborting current request."
+        )
 
 
 PRIMARY_MODEL = "gemini-3.5-flash"
@@ -1168,6 +1170,7 @@ async def transparent_proxy(request: Request, path: str):
 
 
 async def _transparent_proxy_attempt(request: Request, path: str):
+    request_received_time = time.perf_counter()
     global \
         VPN_CONSECUTIVE_ERRORS, \
         VPN_CURRENT_INDEX, \
@@ -1632,6 +1635,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 k: v for k, v in query_params.items() if k.lower() != "key"
             }
 
+            request_sent_time = request_received_time
             try:
                 # Resolve and rotate VPN client on demand
                 try:
@@ -1661,7 +1665,16 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 )
 
                 LAST_USED[api_key] = time.time()
+                request_sent_time = time.perf_counter()
                 response = await client.send(req, stream=True)
+                response_received_time = time.perf_counter()
+
+                internal_latency_ms = int(
+                    (request_sent_time - request_received_time) * 1000
+                )
+                upstream_latency_ms = int(
+                    (response_received_time - request_sent_time) * 1000
+                )
 
                 if response.status_code == 200:
                     VPN_CONSECUTIVE_ERRORS = (
@@ -1689,7 +1702,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
                     # Custom single-line completion log!
                     logger.info(
-                        f"[{candidate_model}] [key#{key_index}-{api_key[-4:]}] [200]"
+                        f"[{candidate_model}] [key#{key_index}-{api_key[-4:]}] [200] [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                     )
 
                     response_headers = {
@@ -1934,7 +1947,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         mark_cooldown(api_key, duration=cooldown_duration)
 
                         logger.warning(
-                            f"[{provider_name}] Key #{key_index} 429 ({candidate_model}) on {request.method} {target_url}. Error: {resp_text}. Cooldown {cooldown_duration:.1f}s. Attempt {attempt}/{max_attempts}"
+                            f"[{provider_name}] Key #{key_index} 429 ({candidate_model}) on {request.method} {target_url}. Error: {resp_text}. Cooldown {cooldown_duration:.1f}s. Attempt {attempt}/{max_attempts} [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                         )
 
                         # Exponential retry sleep: 1, 2, 4, 8, 16, then 65s
@@ -1961,7 +1974,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         error_msg = f"HTTP 403 Forbidden: {resp_text}"
                         log_non_429_error(candidate_model, api_key, error_msg)
                         logger.error(
-                            f"[{provider_name}] Key #{key_index} 403 ({candidate_model}) on {request.method} {target_url}. Error: {resp_text}. Cooldown 24h"
+                            f"[{provider_name}] Key #{key_index} 403 ({candidate_model}) on {request.method} {target_url}. Error: {resp_text}. Cooldown 24h [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                         )
                         continue
                     elif response.status_code == 503:
@@ -1971,7 +1984,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
                         consecutive_503s += 1
                         logger.error(
-                            f"[{provider_name}] Key #{key_index} HTTP 503 ({candidate_model}) on {request.method} {target_url}. Error: {resp_text}. Consecutive 503s: {consecutive_503s}/10"
+                            f"[{provider_name}] Key #{key_index} HTTP 503 ({candidate_model}) on {request.method} {target_url}. Error: {resp_text}. Consecutive 503s: {consecutive_503s}/10 [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                         )
 
                         if consecutive_503s >= 10:
@@ -1993,20 +2006,28 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         )
                         log_non_429_error(candidate_model, api_key, error_msg)
                         logger.error(
-                            f"[{provider_name}] Key #{key_index} HTTP {response.status_code} ({candidate_model}) on {request.method} {target_url}. Error: {resp_text}"
+                            f"[{provider_name}] Key #{key_index} HTTP {response.status_code} ({candidate_model}) on {request.method} {target_url}. Error: {resp_text} [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                         )
                         continue
                     else:
                         error_msg = f"HTTP {response.status_code} Unexpected Status: {resp_text}"
                         log_non_429_error(candidate_model, api_key, error_msg)
                         logger.warning(
-                            f"[{provider_name}] Key #{key_index} HTTP {response.status_code} ({candidate_model}) on {request.method} {target_url}. Error: {resp_text}"
+                            f"[{provider_name}] Key #{key_index} HTTP {response.status_code} ({candidate_model}) on {request.method} {target_url}. Error: {resp_text} [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                         )
                         continue
 
             except Exception as e:
+                response_received_time = time.perf_counter()
+                internal_latency_ms = int(
+                    (request_sent_time - request_received_time) * 1000
+                )
+                upstream_latency_ms = int(
+                    (response_received_time - request_sent_time) * 1000
+                )
+
                 logger.error(
-                    f"[{provider_name}] Key #{key_index} conn error ({candidate_model}) on {request.method} {target_url}: {type(e).__name__} - {e}\n{traceback.format_exc()}"
+                    f"[{provider_name}] Key #{key_index} conn error ({candidate_model}) on {request.method} {target_url}: {type(e).__name__} - {e} [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]\n{traceback.format_exc()}"
                 )
                 log_non_429_error(candidate_model, api_key, f"{type(e).__name__}: {e}")
                 mark_cooldown(api_key, duration=10.0)
