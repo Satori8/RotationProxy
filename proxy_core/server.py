@@ -970,6 +970,9 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
     elif provider_name == "ollama_cloud":
         base_url = "https://ollama.com/v1"
         keys_pool = OLLAMA_CLOUD_KEYS
+    elif provider_name == "opencode_zen":
+        base_url = "https://opencode.ai/zen/v1"
+        keys_pool = OPENCODE_KEYS
     else:
         base_url = "https://generativelanguage.googleapis.com"
         keys_pool = API_KEYS
@@ -983,7 +986,14 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
     # Pick the first available key
     api_key = keys_pool[0]
     headers = {"Content-Type": "application/json"}
-    if provider_name in ("openrouter", "mistral", "llm7", "ollama", "ollama_cloud"):
+    if provider_name in (
+        "openrouter",
+        "mistral",
+        "llm7",
+        "ollama",
+        "ollama_cloud",
+        "opencode_zen",
+    ):
         headers["authorization"] = f"Bearer {api_key}"
     else:
         headers["x-goog-api-key"] = api_key
