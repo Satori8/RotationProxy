@@ -17,6 +17,7 @@ OLLAMA_KEYS_FILE = r"D:\Personal\myvault\90 Private\Sensitive\Ollama Cloud API K
 OLLAMA_CLOUD_KEYS_FILE = (
     r"D:\Personal\myvault\90 Private\Sensitive\Ollama Cloud API Keys.md"
 )
+OPENCODE_KEYS_FILE = r"D:\Personal\myvault\90 Private\Sensitive\OpenCode API Keys.md"
 
 
 def load_keys_from_file(filepath: str) -> list[str]:
@@ -49,6 +50,7 @@ MISTRAL_KEYS = load_keys_from_file(MISTRAL_KEYS_FILE)
 LLM7_KEYS = load_keys_from_file(LLM7_KEYS_FILE)
 OLLAMA_KEYS = load_keys_from_file(OLLAMA_KEYS_FILE)
 OLLAMA_CLOUD_KEYS = load_keys_from_file(OLLAMA_CLOUD_KEYS_FILE)
+OPENCODE_KEYS = load_keys_from_file(OPENCODE_KEYS_FILE)
 
 
 def seconds_until_rpd_reset() -> float:
