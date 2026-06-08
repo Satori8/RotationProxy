@@ -750,16 +750,11 @@ async def analyze_response_for_anomalies(
             add_anomaly_to_state(model, "Response is completely empty (0 bytes).")
             return
 
-        # Check if accumulated text is empty
-        if not response_text or not response_text.strip():
-            msg = f"Response text is empty or only whitespace (Provider: {provider})."
-            logger.warning(f"[{model}] [Anomaly] {msg}")
-            add_anomaly_to_state(model, msg)
-
         # Parse chunks to extract finish reasons and check JSON validity
         finish_reasons = set()
         has_valid_json = False
         has_data_lines = False
+        has_tool_calls = False
 
         lines = raw_response.decode("utf-8", errors="ignore").split("\n")
         for line in lines:
@@ -783,6 +778,11 @@ async def analyze_response_for_anomalies(
                         fr = cand.get("finishReason")
                         if fr:
                             finish_reasons.add(str(fr).upper())
+                        content = cand.get("content", {})
+                        parts = content.get("parts", [])
+                        for part in parts:
+                            if isinstance(part, dict) and ("functionCall" in part or "functionCalls" in part):
+                                has_tool_calls = True
 
                     # Check OpenAI format
                     choices = data.get("choices", [])
@@ -790,6 +790,9 @@ async def analyze_response_for_anomalies(
                         fr = choice.get("finish_reason")
                         if fr:
                             finish_reasons.add(str(fr).upper())
+                        delta = choice.get("delta", {})
+                        if "tool_calls" in delta or "tool_calls" in choice:
+                            has_tool_calls = True
                 except Exception:
                     pass
             else:
@@ -803,17 +806,32 @@ async def analyze_response_for_anomalies(
                             fr = cand.get("finishReason")
                             if fr:
                                 finish_reasons.add(str(fr).upper())
+                            content = cand.get("content", {})
+                            parts = content.get("parts", [])
+                            for part in parts:
+                                if isinstance(part, dict) and ("functionCall" in part or "functionCalls" in part):
+                                    has_tool_calls = True
                         choices = data.get("choices", [])
                         for choice in choices:
                             fr = choice.get("finish_reason")
                             if fr:
                                 finish_reasons.add(str(fr).upper())
+                            delta = choice.get("delta", {})
+                            if "tool_calls" in delta or "tool_calls" in choice:
+                                has_tool_calls = True
                     except Exception:
                         pass
 
+        # Check if accumulated text is empty (only if there are no tool calls)
+        if not response_text or not response_text.strip():
+            if not has_tool_calls:
+                msg = f"Response text is empty or only whitespace (Provider: {provider})."
+                logger.warning(f"[{model}] [Anomaly] {msg}")
+                add_anomaly_to_state(model, msg)
+
         # Check for finishReason anomalies
         for fr in finish_reasons:
-            if fr not in ("STOP", "NONE"):
+            if fr not in ("STOP", "NONE", "TOOL_CALLS", "TOOL_CALL"):
                 msg = f"Stream finished with non-standard reason: '{fr}' (Provider: {provider})"
                 logger.warning(f"[{model}] [Anomaly] {msg}")
                 logger.warning(f"[{model}] [Anomaly Raw Response] {raw_response.decode('utf-8', errors='ignore')}")
