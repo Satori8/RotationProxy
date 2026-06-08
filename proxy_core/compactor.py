@@ -239,20 +239,14 @@ BANNED_COMPRESSED_TOOLS = {
     "tokensave_derives",
     "tokensave_impls",
     "tokensave_similar",
-    "tokensave_call_chain",
-    "tokensave_node",
+    "tokensave_call_chain",    
     "tokensave_status",
-    # 3. Дублирующиеся инструменты чтения (БЛОКИРУЕМ - полностью заменены на ctx_read)
-    "tokensave_read",
-    "tokensave_files",
-    "tokensave_context",
     # 4. Тяжелые или ненужные утилиты из lean-ctx (БЛОКИРУЕМ)
     "ctx_architecture",
     "ctx_agent",
     "ctx_compress",
     "ctx_pack",
     "ctx_refactor",
-    "ctx_edit",
     "shell",
 }
 
@@ -970,6 +964,23 @@ def process_request_payload(payload_dict, config=None):
                     "[Compactor] Monkey-patched headroom._detect_content to use pure Python regex detector"
                 )
         except Exception as e:
+            # Monkey-patch is_mixed_content to prevent splitting pure code/diff/results/html into uncompressed plain text
+            _orig_is_mixed_content = cr.is_mixed_content
+            def _safe_is_mixed_content(content: str) -> bool:
+                detection = cr._detect_content(content)
+                if detection.content_type in (
+                    cr.ContentType.SOURCE_CODE,
+                    cr.ContentType.GIT_DIFF,
+                    cr.ContentType.SEARCH_RESULTS,
+                    cr.ContentType.HTML,
+                ):
+                    return False
+                return _orig_is_mixed_content(content)
+            cr.is_mixed_content = _safe_is_mixed_content
+            logger.debug(
+                "[Compactor] Monkey-patched headroom.is_mixed_content to prevent splitting pure blocks"
+            )
+
             logger.error(f"[Compactor] Failed to monkey-patch headroom: {e}")
 
         # Monkey-patch CodeLanguage to handle unknown languages (like 'dot') gracefully
