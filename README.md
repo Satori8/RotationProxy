@@ -10,6 +10,9 @@ A resilient, high-performance API key, model, and isolated VPN rotation proxy de
 - **Robust Key Rotation & Cooldowns**: Cycles through your list of API keys. If a key hits a rate limit (429) or fails, it is placed on a cooldown while the proxy immediately retries the request using the next available key.
 - **Failover Model Rotation**: If all keys for a requested model are exhausted or rate-limited, the proxy automatically falls back to alternative free models in its rotation list (e.g., DeepSeek v4 Flash, Kimi K2.6, Llama 3.3, Qwen 3 Coder, etc.) to guarantee high availability.
 - **Self-Healing Key Registry**: Bad keys are logged to `error_keys_log.json`. However, as soon as a key successfully processes a request (HTTP 200), it is automatically cleared and vindicated from the error log.
+- **Ollama Dynamic Routing**: Dynamically registers and routes Ollama models (e.g., `ollama/minimax-m3` or `ollama_cloud/...`) to prevent them from being misrouted to OpenRouter.
+- **Manual Cooldown Bypass**: Cooldown checks are bypassed entirely for manual model selection or when model rotation is disabled (`enable_model_rotation = False`).
+- **Critical Safety Stop**: Implemented a server-wide safety stop (`track_and_check_safety_limit`) that immediately shuts down the server process if more than 3 model/server errors occur within a rolling 2.0-second window, preventing infinite error loops.
 
 ### 🔌 2. WireGuard VPN Tunnel Manager & Health Check
 - **Isolated Socket-Level Routing**: Outgoing API requests are routed through specific VPN indexes using **socket-level local address binding**. The system-wide routing table is **never** modified! Your browser, games, and other apps stay on your default home ISP, while *only* the proxy's API requests go through the VPN.
@@ -48,6 +51,11 @@ A resilient, high-performance API key, model, and isolated VPN rotation proxy de
 - **Automatic Context Compaction**: Runs an active compactor (`proxy_core/compactor.py`) that intercepts and rewrites tool responses to minimize context tokens.
 - **Deduplication & Schema Compaction**: Strips duplicate system instructions, repetitive skill blocks, and dynamically compacts MCP tool descriptions to their bare minimum required schema.
 - **Surgical Reading Guardrail**: Automatically blocks generic `read` calls on code or structured files, forcing the use of token-efficient `smart_read` outline/signatures modes.
+- **Headroom Context Compression**: Integrates the `headroom` library to compress long tool outputs, file contents, and search results to save context window space, with strict size verification to ensure compressed content is only used if it is actually shorter than the original.
+- **Tiktoken Token Statistics**: Uses `tiktoken` to calculate exact token metrics (input from OpenCode, after local compaction, and after headroom compression) and logs detailed savings statistics (in KB and tokens).
+- **Dynamic Monkey-Patching & Safety**: Includes robust monkey-patches for `headroom` (pure Python regex detector bypass to avoid Rust detect_content_type hangs, unknown language handling gracefully, and disabling slow ONNX-based model loading/inference) and `tree_sitter` (SafeParserWrapper to handle bytes vs str gracefully).
+- **Tool Guardrails Injection**: Surgically injects strict tool guardrails into the system prompt to enforce optimized tools (e.g., `tokensave` and `lean-ctx`) and prevent the use of restricted generic tools.
+- **Internal Reminder Relocation**: Extracts `<internal_reminder>` blocks from user/assistant messages and appends them to the system instruction to preserve prompt caching.
 
 ### 🇷🇺 8. Cyrillic Output & Russian Windows Compatibility
 - **UTF-8 Transcoding**: Configures all PowerShell and cmd output captures to set console encoding to UTF-8 and decode using UTF-8 with fallback, ensuring 100% compatibility with Russian Windows system language.
