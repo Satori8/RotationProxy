@@ -1239,6 +1239,8 @@ async def _transparent_proxy_attempt(request: Request, path: str):
     now = time.time()
     if forced_model != "auto":
         available_candidates = [forced_model]
+    elif not enable_model_rotation:
+        available_candidates = candidates  # bypass cooldowns when rotation is disabled
     else:
         available_candidates = [
             candidate
