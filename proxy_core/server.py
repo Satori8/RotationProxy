@@ -216,6 +216,20 @@ logger.addHandler(queue_handler)
 RECENT_ERROR_TIMESTAMPS = []
 
 
+def truncate_thought_signature(text: str) -> str:
+    try:
+
+        def repl(match):
+            val = match.group(2)
+            if len(val) > 100:
+                return f'{match.group(1)}"<truncated thoughtSignature, length: {len(val)}>"'
+            return match.group(0)
+
+        return re.sub(r'("thoughtSignature"\s*:\s*)"([^"]+)"', repl, text)
+    except Exception:
+        return text
+
+
 def track_and_check_safety_limit():
     global RECENT_ERROR_TIMESTAMPS
     now = time.time()
@@ -836,7 +850,7 @@ async def analyze_response_for_anomalies(
                 msg = f"Stream finished with non-standard reason: '{fr}' (Provider: {provider})"
                 logger.warning(f"[{model}] [Anomaly] {msg}")
                 logger.warning(
-                    f"[{model}] [Anomaly Raw Response] {raw_response.decode('utf-8', errors='ignore')}"
+                    f"[{model}] [Anomaly Raw Response] {truncate_thought_signature(raw_response.decode('utf-8', errors='ignore'))}"
                 )
                 add_anomaly_to_state(model, msg)
 
@@ -1020,7 +1034,7 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
         resp = await client.send(req_out)
         status_code = resp.status_code
         try:
-            resp_text = resp.text
+            resp_text = truncate_thought_signature(resp.text)
         except Exception:
             resp_text = "(failed to read response text)"
         await resp.aclose()
@@ -1914,7 +1928,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     # For any non-200 status code, read the full response body without truncation
                     try:
                         await response.aread()
-                        resp_text = response.text
+                        resp_text = truncate_thought_signature(response.text)
                     except Exception as re:
                         resp_text = f"<Failed to read response body: {re}>"
                     await response.aclose()
