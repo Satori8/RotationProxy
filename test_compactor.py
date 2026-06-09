@@ -305,6 +305,16 @@ def test_inspect_tree_sitter():
     assert hasattr(node, "type") or hasattr(node, "kind")
 
 
+def test_find_builtins_node():
+    print("Finding builtins.Node...")
+    import builtins
+    if hasattr(builtins, "Node"):
+        print(f"[BUILTINS] Node exists: {builtins.Node}")
+        print(f"[BUILTINS] Node dir: {dir(builtins.Node)}")
+    else:
+        print("[BUILTINS] Node does NOT exist in builtins module!")
+
+
 if __name__ == "__main__":
     print("=== RUNNING COMPACTOR TESTS ===")
     try:
@@ -318,6 +328,7 @@ if __name__ == "__main__":
         test_headroom_compression()
         test_extract_text_from_chunk()
         test_inspect_tree_sitter()
+        test_find_builtins_node()
         print("\n=== ALL TESTS PASSED SUCCESSFULLY! ===")
         sys.exit(0)
     except AssertionError as e:
