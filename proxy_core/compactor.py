@@ -1208,6 +1208,18 @@ def process_request_payload(payload_dict, config=None):
                     raise ex
             ContentRouter.compress = _safe_compress
 
+            # Monkey-patch CodeAwareCompressor._compress_with_ast to capture tree-sitter tracebacks
+            from headroom.transforms.code_compressor import CodeAwareCompressor
+            _orig_compress_with_ast = CodeAwareCompressor._compress_with_ast
+            def _safe_compress_with_ast(self, *args, **kwargs):
+                try:
+                    return _orig_compress_with_ast(self, *args, **kwargs)
+                except Exception as ex:
+                    import traceback
+                    logger.error(f"[Compactor] Traceback for headroom _compress_with_ast error:\n{traceback.format_exc()}")
+                    raise ex
+            CodeAwareCompressor._compress_with_ast = _safe_compress_with_ast
+
             if "messages" in payload_dict:
                 # OpenAI format: compress only string content fields directly to preserve tool_calls and structure
                 for msg in payload_dict["messages"]:
