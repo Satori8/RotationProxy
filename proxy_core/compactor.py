@@ -1057,6 +1057,8 @@ def process_request_payload(payload_dict, config=None):
                     return [SafeNodeWrapper(c) for c in children_list] if children_list is not None else []
 
                 def __getattr__(self, name):
+                    if name == "_node":
+                        raise AttributeError
                     val = getattr(self._node, name)
                     if callable(val) and name in ("type", "children", "root_node"):
                         return val()
@@ -1088,6 +1090,8 @@ def process_request_payload(payload_dict, config=None):
                     return SafeNodeWrapper(node) if node is not None else None
 
                 def __getattr__(self, name):
+                    if name == "_tree":
+                        raise AttributeError
                     return getattr(self._tree, name)
 
                 def __eq__(self, other):
@@ -1175,6 +1179,30 @@ def process_request_payload(payload_dict, config=None):
                 protect_analysis_context=False,
             )
             router = ContentRouter(config=cfg)
+
+            # Monkey-patch _try_ml_compressor to prevent fallback from
+            # replacing successful code_aware compression. CodeAwareCompressor
+            # reports compressed_tokens as chars/4 while the ContentRouter
+            # uses word count as original_tokens. This mismatch causes the
+            # fallback to always replace the code_aware result with the
+            # original content when kompress is disabled.
+            _orig_try_ml = router._try_ml_compressor
+            def _patched_try_ml(content, context, question=None):
+                if router.config.enable_kompress:
+                    return _orig_try_ml(content, context, question)
+                # Return high token count so fallback never beats code_aware
+                return content, len(content)
+            router._try_ml_compressor = _patched_try_ml
+
+            _orig_compress = ContentRouter.compress
+            def _safe_compress(self, *args, **kwargs):
+                try:
+                    return _orig_compress(self, *args, **kwargs)
+                except Exception as ex:
+                    import traceback
+                    logger.error(f"[Compactor] Traceback for headroom error:\n{traceback.format_exc()}")
+                    raise ex
+            ContentRouter.compress = _safe_compress
 
             if "messages" in payload_dict:
                 # OpenAI format: compress only string content fields directly to preserve tool_calls and structure

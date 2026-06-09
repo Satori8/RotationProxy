@@ -317,6 +317,7 @@ def test_find_builtins_node():
 
 def test_headroom_code_compression():
     print("Testing headroom code compression...")
+    # Must have >= 3 Python pattern matches and > 100 tokens to trigger headroom code-aware compression
     python_code = """
 def very_long_function_name_to_test_headroom_compression_and_ensure_it_is_greater_than_five_hundred_characters(a, b, c):
     \"\"\"This is a very long docstring to help exceed the five hundred character limit for headroom compression to trigger and verify that SafeTreeWrapper and SafeNodeWrapper work perfectly.\"\"\"
@@ -332,9 +333,27 @@ def very_long_function_name_to_test_headroom_compression_and_ensure_it_is_greate
         else:
             print("Odd")
     return x + y + z
+
+
+def another_helper_function_for_testing_purposes(param_one: int, param_two: int) -> int:
+    \"\"\"This is another helper function to add more tokens to the test code sample.\"\"\"
+    result_value = param_one * param_two + param_one
+    print(f"Helper function computed: {result_value}")
+    for j in range(5):
+        print(f"Helper loop: {j}")
+    return result_value
+
+
+if __name__ == "__main__":
+    result = very_long_function_name_to_test_headroom_compression_and_ensure_it_is_greater_than_five_hundred_characters(1, 2, 3)
+    extra = another_helper_function_for_testing_purposes(result, 10)
+    print(f"Final combined result: {result + extra}")
 """
     payload = {"contents": [{"role": "user", "parts": [{"text": python_code}]}]}
     compacted = process_request_payload(payload)
+    compacted_text = compacted["contents"][0]["parts"][0]["text"]
+    print(f"\n[COMPRESSION RESULT]:\n{compacted_text}\n")
+    assert compacted_text != python_code, "Compression did not change the text"
 
 
 if __name__ == "__main__":
