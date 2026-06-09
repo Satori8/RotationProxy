@@ -315,6 +315,28 @@ def test_find_builtins_node():
         print("[BUILTINS] Node does NOT exist in builtins module!")
 
 
+def test_headroom_code_compression():
+    print("Testing headroom code compression...")
+    python_code = """
+def very_long_function_name_to_test_headroom_compression_and_ensure_it_is_greater_than_five_hundred_characters(a, b, c):
+    \"\"\"This is a very long docstring to help exceed the five hundred character limit for headroom compression to trigger and verify that SafeTreeWrapper and SafeNodeWrapper work perfectly.\"\"\"
+    print("Starting a very long function to test headroom compression")
+    x = a + b
+    y = b + c
+    z = c + a
+    print(f"Calculated x={x}, y={y}, z={z}")
+    for i in range(10):
+        print(f"Loop iteration {i}")
+        if i % 2 == 0:
+            print("Even")
+        else:
+            print("Odd")
+    return x + y + z
+"""
+    payload = {"contents": [{"role": "user", "parts": [{"text": python_code}]}]}
+    compacted = process_request_payload(payload)
+
+
 if __name__ == "__main__":
     print("=== RUNNING COMPACTOR TESTS ===")
     try:
@@ -326,6 +348,7 @@ if __name__ == "__main__":
         test_inject_tool_guardrails()
         test_process_request_payload()
         test_headroom_compression()
+        test_headroom_code_compression()
         test_extract_text_from_chunk()
         test_inspect_tree_sitter()
         test_find_builtins_node()
