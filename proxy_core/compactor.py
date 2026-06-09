@@ -963,7 +963,6 @@ def process_request_payload(payload_dict, config=None):
                 logger.debug(
                     "[Compactor] Monkey-patched headroom._detect_content to use pure Python regex detector"
                 )
-        except Exception as e:
             # Monkey-patch is_mixed_content to prevent splitting pure code/diff/results/html into uncompressed plain text
             _orig_is_mixed_content = cr.is_mixed_content
             def _safe_is_mixed_content(content: str) -> bool:
@@ -980,7 +979,7 @@ def process_request_payload(payload_dict, config=None):
             logger.debug(
                 "[Compactor] Monkey-patched headroom.is_mixed_content to prevent splitting pure blocks"
             )
-
+        except Exception as e:
             logger.error(f"[Compactor] Failed to monkey-patch headroom: {e}")
 
         # Monkey-patch CodeLanguage to handle unknown languages (like 'dot') gracefully
@@ -1039,6 +1038,72 @@ def process_request_payload(payload_dict, config=None):
         try:
             import tree_sitter_language_pack
 
+            class SafeNodeWrapper:
+                def __init__(self, node):
+                    self._node = node
+
+                @property
+                def type(self):
+                    val = self._node.type
+                    if callable(val):
+                        val = val()
+                    return val
+
+                @property
+                def children(self):
+                    children_list = self._node.children
+                    if callable(children_list):
+                        children_list = children_list()
+                    return [SafeNodeWrapper(c) for c in children_list] if children_list is not None else []
+
+                def __getattr__(self, name):
+                    val = getattr(self._node, name)
+                    if callable(val) and name in ("type", "children", "root_node"):
+                        return val()
+                    return val
+
+                def __eq__(self, other):
+                    if isinstance(other, SafeNodeWrapper):
+                        return self._node == other._node
+                    return self._node == other
+
+                def __hash__(self):
+                    return hash(self._node)
+
+                def __repr__(self):
+                    return repr(self._node)
+
+                def __str__(self):
+                    return str(self._node)
+
+            class SafeTreeWrapper:
+                def __init__(self, tree):
+                    self._tree = tree
+
+                @property
+                def root_node(self):
+                    node = self._tree.root_node
+                    if callable(node):
+                        node = node()
+                    return SafeNodeWrapper(node) if node is not None else None
+
+                def __getattr__(self, name):
+                    return getattr(self._tree, name)
+
+                def __eq__(self, other):
+                    if isinstance(other, SafeTreeWrapper):
+                        return self._tree == other._tree
+                    return self._tree == other
+
+                def __hash__(self):
+                    return hash(self._tree)
+
+                def __repr__(self):
+                    return repr(self._tree)
+
+                def __str__(self):
+                    return str(self._tree)
+
             class SafeParserWrapper:
                 def __init__(self, parser):
                     self._parser = parser
@@ -1046,16 +1111,19 @@ def process_request_payload(payload_dict, config=None):
                 def parse(self, source, *args, **kwargs):
                     if isinstance(source, bytes):
                         try:
-                            return self._parser.parse(source, *args, **kwargs)
+                            tree = self._parser.parse(source, *args, **kwargs)
                         except TypeError as te:
                             if "bytes" in str(te) or "str" in str(te):
-                                return self._parser.parse(
+                                tree = self._parser.parse(
                                     source.decode("utf-8", errors="replace"),
                                     *args,
                                     **kwargs,
                                 )
-                            raise
-                    return self._parser.parse(source, *args, **kwargs)
+                            else:
+                                raise
+                    else:
+                        tree = self._parser.parse(source, *args, **kwargs)
+                    return SafeTreeWrapper(tree) if tree is not None else None
 
                 def __getattr__(
                     self, name
