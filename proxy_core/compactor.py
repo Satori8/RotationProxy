@@ -1170,6 +1170,9 @@ def process_request_payload(payload_dict, config=None):
                 enable_code_aware=True,
                 fallback_strategy=CompressionStrategy.PASSTHROUGH,
                 prefer_code_aware_for_code=True,
+                skip_user_messages=False,
+                protect_recent_code=0,
+                protect_analysis_context=False,
             )
             router = ContentRouter(config=cfg)
 
