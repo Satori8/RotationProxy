@@ -305,6 +305,24 @@ def test_inspect_tree_sitter():
     assert hasattr(node, "type") or hasattr(node, "kind")
 
 
+def test_inspect_native_tree_sitter():
+    print("Inspecting native tree-sitter node attributes...")
+    import tree_sitter_language_pack
+    # Get the original unwrapped parser
+    from proxy_core.compactor import _orig_get_parser
+    parser = _orig_get_parser("python")
+    tree = parser.parse(b"def foo(): pass")
+    native_node = tree.root_node
+    print(f"\n[NATIVE INSPECT] node type: {type(native_node)}")
+    print(f"[NATIVE INSPECT] node dir: {dir(native_node)}")
+    # Print type attribute or any type-like attributes
+    if hasattr(native_node, "type"):
+        print(f"[NATIVE INSPECT] node.type value: {native_node.type}")
+    if hasattr(native_node, "kind"):
+        print(f"[NATIVE INSPECT] node.kind value: {native_node.kind}")
+
+
+
 def test_find_builtins_node():
     print("Finding builtins.Node...")
     import builtins
@@ -370,6 +388,7 @@ if __name__ == "__main__":
         test_headroom_code_compression()
         test_extract_text_from_chunk()
         test_inspect_tree_sitter()
+        test_inspect_native_tree_sitter()
         test_find_builtins_node()
         print("\n=== ALL TESTS PASSED SUCCESSFULLY! ===")
         sys.exit(0)

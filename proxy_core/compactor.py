@@ -1139,6 +1139,10 @@ def process_request_payload(payload_dict, config=None):
                     return getattr(self._parser, name)
 
             _orig_get_parser = tree_sitter_language_pack.get_parser
+            import sys
+            _mod = sys.modules[__name__]
+            if not hasattr(_mod, '_orig_get_parser'):
+                _mod._orig_get_parser = _orig_get_parser
 
             def _safe_get_parser(language):
                 parser = _orig_get_parser(language)
