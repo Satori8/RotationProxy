@@ -293,6 +293,17 @@ def test_extract_text_from_chunk():
     print("  -> extract_text_from_chunk passed!")
 
 
+def test_inspect_tree_sitter():
+    print("Inspecting tree-sitter node attributes...")
+    import tree_sitter_language_pack
+    parser = tree_sitter_language_pack.get_parser("python")
+    tree = parser.parse(b"def foo(): pass")
+    node = tree.root_node
+    print(f"\n[INSPECT] node type: {type(node)}")
+    print(f"[INSPECT] node dir: {dir(node)}")
+    # We want to print the type and attributes to stdout so we can see them
+    assert hasattr(node, "type") or hasattr(node, "kind")
+
 
 if __name__ == "__main__":
     print("=== RUNNING COMPACTOR TESTS ===")
@@ -306,6 +317,7 @@ if __name__ == "__main__":
         test_process_request_payload()
         test_headroom_compression()
         test_extract_text_from_chunk()
+        test_inspect_tree_sitter()
         print("\n=== ALL TESTS PASSED SUCCESSFULLY! ===")
         sys.exit(0)
     except AssertionError as e:
