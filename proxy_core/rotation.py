@@ -1,8 +1,9 @@
 import os
 import json
 import time
-import hashlib
+import re
 import logging
+import datetime
 from proxy_core.config import load_rotation_config, save_rotation_config
 
 logger = logging.getLogger("proxy")
@@ -70,8 +71,13 @@ def seconds_until_rpd_reset() -> float:
 def log_non_429_error(model: str, key: str, error_msg: str) -> None:
     ERROR_LOG_PATH = "error_keys_log.json"
     try:
-        error_hash = hashlib.md5(error_msg.encode("utf-8")).hexdigest()
-        error_id = f"{model}|{key}|{error_hash}"
+        # Only log 403 errors
+        match = re.search(r"HTTP (\d{3})", error_msg)
+        if not match or match.group(1) != "403":
+            return
+
+        error_code = match.group(1)
+        error_id = f"{model}|{key}|{error_code}"
 
         if os.path.exists(ERROR_LOG_PATH) and os.path.getsize(ERROR_LOG_PATH) > 0:
             with open(ERROR_LOG_PATH, "r", encoding="utf-8") as f:
@@ -82,24 +88,27 @@ def log_non_429_error(model: str, key: str, error_msg: str) -> None:
         else:
             error_log = {}
 
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         if error_id in error_log:
             error_log[error_id]["count"] += 1
-            error_log[error_id]["last_occurrence"] = time.time()
+            error_log[error_id]["last_occurrence"] = now_str
+            error_log[error_id]["error_message"] = error_msg
         else:
             error_log[error_id] = {
                 "model": model,
                 "key": key,
                 "error_message": error_msg,
                 "count": 1,
-                "first_occurrence": time.time(),
-                "last_occurrence": time.time(),
+                "first_occurrence": now_str,
+                "last_occurrence": now_str,
             }
 
         with open(ERROR_LOG_PATH, "w", encoding="utf-8") as f:
             json.dump(error_log, f, indent=2, ensure_ascii=False)
 
         logger.info(
-            f"Logged error for {model} with key {key[:8]}... (count: {error_log[error_id]['count']})"
+            f"Logged error for {model} with key {key[:8]}...{key[-4:]} (count: {error_log[error_id]['count']})"
         )
     except Exception as e:
         logger.error(f"Failed to log error to {ERROR_LOG_PATH}: {e}")
@@ -130,11 +139,11 @@ def remove_key_from_error_log(model: str, key: str) -> None:
                 json.dump(error_log, f, indent=2, ensure_ascii=False)
 
             logger.info(
-                f"Removed {len(keys_to_remove)} error log entries for {model} with key {key[:8]}..."
+                f"Removed {len(keys_to_remove)} error log entries for {model} with key {key[:8]}...{key[-4:]}"
             )
     except Exception as e:
         logger.error(
-            f"Failed to remove error log entries for {model} with key {key[:8]}...: {e}"
+            f"Failed to remove error log entries for {model} with key {key[:8]}...{key[-4:]}: {e}"
         )
 
 
