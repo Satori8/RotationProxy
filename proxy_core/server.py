@@ -1680,11 +1680,11 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         await asyncio.sleep(retry_sleep)
                         continue
                     elif response.status_code == 403:
-                        mark_cooldown(api_key, duration=86400.0)
+                        mark_cooldown(api_key, duration=43200.0)
                         error_msg = f"HTTP 403 Forbidden: {resp_text}"
                         log_non_429_error(candidate_model, api_key, error_msg)
                         logger.error(
-                            f"[{provider_name}] Key #{key_index} 403 ({candidate_model}) on {request.method} {target_url}. Error: {resp_text}. Cooldown 24h [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
+                            f"[{provider_name}] Key #{key_index} 403 ({candidate_model}) on {request.method} {target_url}. Error: {resp_text}. Cooldown 12h [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                         )
                         continue
                     elif response.status_code == 503:
