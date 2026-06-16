@@ -168,7 +168,7 @@ class ProxyGUI(ctk.CTk):
             FORCE_MODEL[k] = v
 
         self.title("Resilient Key Rotation Proxy")
-        self.geometry("1100x700")
+        self.geometry("1150x700")
 
         if os.path.exists("app.ico"):
             try:
@@ -198,6 +198,21 @@ class ProxyGUI(ctk.CTk):
             text_color="#4CAF50",
         )
         self.status_badge.pack(pady=(0, 10))
+
+        # VPN status lamps in sidebar
+        self.sidebar_vpn_frame = ctk.CTkFrame(self.left_panel, fg_color="transparent")
+        self.sidebar_vpn_frame.pack(fill="x", padx=10, pady=(0, 10))
+        self.sidebar_vpn_lamps = {}
+        for i in range(1, 7):
+            lamp = ctk.CTkLabel(
+                self.sidebar_vpn_frame,
+                text=f"● VPN {i}",
+                text_color="#7F8C8D",
+                font=ctk.CTkFont(size=10),
+            )
+            lamp.pack(side="left", padx=2)
+            CTkToolTip(lamp, f"VPN {i}: Off")
+            self.sidebar_vpn_lamps[i] = lamp
 
         ctk.CTkLabel(
             self.left_panel,
@@ -665,6 +680,9 @@ class ProxyGUI(ctk.CTk):
         self.withdraw()
         self.update_idletasks()
         self.after_idle(self.deiconify)
+
+        # Auto-start VPN tunnels 1 second after UI is ready
+        self.after(1000, self.on_vpn_start_tunnels)
 
     def on_thinking_select(self, val):
         config = load_rotation_config()
@@ -2202,14 +2220,26 @@ class ProxyGUI(ctk.CTk):
                             self.channel_indicators[i].configure(
                                 text="● Off", text_color="#7F8C8D"
                             )
+                            self.sidebar_vpn_lamps[i].configure(
+                                text="●", text_color="#7F8C8D"
+                            )
+                            CTkToolTip(self.sidebar_vpn_lamps[i], f"VPN {i}: Off")
                         elif status == "offline":
                             self.channel_indicators[i].configure(
                                 text="● Offline", text_color="#E74C3C"
                             )
+                            self.sidebar_vpn_lamps[i].configure(
+                                text="●", text_color="#E74C3C"
+                            )
+                            CTkToolTip(self.sidebar_vpn_lamps[i], f"VPN {i}: Offline")
                         else:
                             self.channel_indicators[i].configure(
                                 text=f"● {data['latency']}ms", text_color="#2ECC71"
                             )
+                            self.sidebar_vpn_lamps[i].configure(
+                                text="●", text_color="#2ECC71"
+                            )
+                            CTkToolTip(self.sidebar_vpn_lamps[i], f"VPN {i}: {data['latency']}ms")
 
                 self.after(0, update_ui)
             except Exception as e:

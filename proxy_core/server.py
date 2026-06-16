@@ -92,6 +92,37 @@ REQUEST_COUNT = 0
 VPN_ANY_TUNNEL_ACTIVE = False
 
 
+def format_error_message(resp_text: str) -> str:
+    if not resp_text:
+        return ""
+    resp_text = resp_text.strip()
+    if not (resp_text.startswith("{") and resp_text.endswith("}")):
+        return " ".join(resp_text.splitlines())
+    try:
+        import json
+        data = json.loads(resp_text)
+        if "error" in data:
+            err = data["error"]
+            if isinstance(err, dict):
+                code = err.get("code")
+                status = err.get("status")
+                message = err.get("message")
+                parts = []
+                if code is not None:
+                    parts.append(f"code: {code}")
+                if status is not None:
+                    parts.append(f"status: {status}")
+                if message is not None:
+                    parts.append(f"message: {message}")
+                if parts:
+                    return ", ".join(parts)
+            elif isinstance(err, str):
+                return f"error: {err}"
+        return json.dumps(data, ensure_ascii=False)
+    except Exception:
+        return " ".join(resp_text.splitlines())
+
+
 async def rotate_vpn_on_the_fly(reason: str):
     global VPN_CURRENT_INDEX
     async with VPN_ROTATION_LOCK:
@@ -681,6 +712,7 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
 
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         beautified_body = beautify_json_string(resp_text)
+        formatted_error = format_error_message(resp_text)
         logger.info(
             f"[Test Model] [vpn#{actual_vpn_index}] Upstream status: {status_code}, latency: {latency_ms}ms, body:\n{beautified_body}"
         )
@@ -692,46 +724,33 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
                 "latency_ms": latency_ms,
             }
         elif status_code == 429:
-            logger.error(f"[Test Model] [vpn#{actual_vpn_index}] Rate limit exceeded (429):\n{beautified_body}")
-            global_log_queue.put(
-                f"[Test Model] [vpn#{actual_vpn_index}] Rate limit exceeded (429):\n{beautified_body}"
-            )
+            logger.error(f"[Test Model] [vpn#{actual_vpn_index}] Rate limit exceeded (429): {formatted_error}")
             return {
                 "status": "rate_limited",
-                "message": f"Rate limit exceeded (429):\n{beautified_body}",
+                "message": f"Rate limit exceeded (429): {formatted_error}",
                 "latency_ms": latency_ms,
             }
         elif status_code == 404:
-            logger.error(f"[Test Model] [vpn#{actual_vpn_index}] Model not found (404):\n{beautified_body}")
-            global_log_queue.put(
-                f"[Test Model] [vpn#{actual_vpn_index}] Model not found (404):\n{beautified_body}"
-            )
+            logger.error(f"[Test Model] [vpn#{actual_vpn_index}] Model not found (404): {formatted_error}")
             return {
                 "status": "not_found",
-                "message": f"Model not found (404):\n{beautified_body}",
+                "message": f"Model not found (404): {formatted_error}",
                 "latency_ms": latency_ms,
             }
         else:
             logger.error(
-                f"[Test Model] [vpn#{actual_vpn_index}] Server returned status {status_code}:\n{beautified_body}"
-            )
-            global_log_queue.put(
-                f"[Test Model] [vpn#{actual_vpn_index}] Server returned status {status_code}:\n{beautified_body}"
+                f"[Test Model] [vpn#{actual_vpn_index}] Server returned status {status_code}: {formatted_error}"
             )
             return {
                 "status": "error",
-                "message": f"Server returned status {status_code}:\n{beautified_body}",
+                "message": f"Server returned status {status_code}: {formatted_error}",
                 "latency_ms": latency_ms,
             }
     except Exception as e:
         latency_ms = int((time.perf_counter() - start_time) * 1000)
-        import traceback
-
-        tb_str = traceback.format_exc()
         logger.error(
-            f"[Test Model] [vpn#{actual_vpn_index}] Network/Connection error on testing '{model_id}' via '{provider_name}' to {url}: {e}\n{tb_str}"
+            f"[Test Model] [vpn#{actual_vpn_index}] Network/Connection error on testing '{model_id}' via '{provider_name}' to {url}: {e}"
         )
-        global_log_queue.put(f"[Test Model] [vpn#{actual_vpn_index}] [ERROR] connection failed to {url}: {e}")
         return {
             "status": "error",
             "message": f"Network/Connection error: {e}",
@@ -1422,8 +1441,9 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     remove_key_from_error_log(candidate_model, api_key)
 
                     # Custom single-line completion log!
+                    stream_label = "STREAM START" if is_streaming_request else "200"
                     logger.info(
-                        f"[{provider_name}] [{candidate_model}] [vpn#{actual_vpn_index}] [key#{key_index}-{api_key[-4:]}] [200] [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
+                        f"[{provider_name}] [{candidate_model}] [vpn#{actual_vpn_index}] [key#{key_index}-{api_key[-4:]}] [{stream_label}] [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                     )
 
                     response_headers = {
@@ -1441,10 +1461,6 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
                     async def stream_generator():
                         try:
-                            logger.info(
-                                f"[{candidate_model}] [vpn#{actual_vpn_index}] Starting stream transmission..."
-                            )
-
                             async def iter_bytes():
                                 try:
                                     async for chunk in response.aiter_bytes():
@@ -1516,10 +1532,6 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
                             async for trans_chunk in iter_translated_chunks():
                                 yield trans_chunk
-
-                            logger.info(
-                                f"[{candidate_model}] [vpn#{actual_vpn_index}] Stream transmission completed successfully. Total chunks: {len(raw_chunks_buffer)}"
-                            )
                         except asyncio.CancelledError:
                             logger.warning(
                                 f"[{candidate_model}] [vpn#{actual_vpn_index}] Stream generator task cancelled."
@@ -1538,6 +1550,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
                             # Extract and log token usage
                             usage = extract_token_usage(raw_resp_bytes)
+                            chunks_str = f"Chunks: {len(raw_chunks_buffer)}"
                             if usage["total_tokens"] > 0:
                                 cached_str = (
                                     f", Cached: {usage['cached_tokens']}"
@@ -1545,7 +1558,11 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                     else ""
                                 )
                                 logger.info(
-                                    f"[{candidate_model}] [vpn#{actual_vpn_index}] [Usage] Prompt: {usage['prompt_tokens']}, Completion: {usage['completion_tokens']}, Total: {usage['total_tokens']}{cached_str}"
+                                    f"[{candidate_model}] [vpn#{actual_vpn_index}] STREAM END. {chunks_str} [Usage] Prompt: {usage['prompt_tokens']}, Completion: {usage['completion_tokens']}, Total: {usage['total_tokens']}{cached_str}"
+                                )
+                            else:
+                                logger.info(
+                                    f"[{candidate_model}] [vpn#{actual_vpn_index}] STREAM END. {chunks_str}"
                                 )
 
                             # Always analyze response for anomalies in the background
@@ -1668,7 +1685,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         mark_cooldown(api_key, duration=cooldown_duration)
 
                         logger.warning(
-                            f"[{provider_name}] [vpn#{actual_vpn_index}] Key #{key_index} 429 ({candidate_model}) on {request.method} {target_url}. Error: {resp_text}. Cooldown {cooldown_duration:.1f}s. Attempt {attempt}/{max_attempts} [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
+                            f"[{provider_name}] [vpn#{actual_vpn_index}] Key #{key_index} 429 ({candidate_model}) on {request.method} {target_url}. Error: {format_error_message(resp_text)}. Cooldown {cooldown_duration:.1f}s. Attempt {attempt}/{max_attempts} [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                         )
 
                         # Exponential retry sleep: 1, 2, 4, 8, 16, then 65s
@@ -1695,7 +1712,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         error_msg = f"HTTP 403 Forbidden: {resp_text}"
                         log_non_429_error(candidate_model, api_key, error_msg)
                         logger.error(
-                            f"[{provider_name}] [vpn#{actual_vpn_index}] Key #{key_index} 403 ({candidate_model}) on {request.method} {target_url}. Error: {resp_text}. Cooldown 12h [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
+                            f"[{provider_name}] [vpn#{actual_vpn_index}] Key #{key_index} 403 ({candidate_model}) on {request.method} {target_url}. Error: {format_error_message(resp_text)}. Cooldown 12h [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                         )
                         continue
                     elif response.status_code == 503:
@@ -1705,7 +1722,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
                         consecutive_503s += 1
                         logger.error(
-                            f"[{provider_name}] [vpn#{actual_vpn_index}] Key #{key_index} HTTP 503 ({candidate_model}) on {request.method} {target_url}. Error: {resp_text}. Consecutive 503s: {consecutive_503s}/10 [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
+                            f"[{provider_name}] [vpn#{actual_vpn_index}] Key #{key_index} HTTP 503 ({candidate_model}) on {request.method} {target_url}. Error: {format_error_message(resp_text)}. Consecutive 503s: {consecutive_503s}/10 [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                         )
 
                         if consecutive_503s >= 10:
@@ -1727,14 +1744,14 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         )
                         log_non_429_error(candidate_model, api_key, error_msg)
                         logger.error(
-                            f"[{provider_name}] [vpn#{actual_vpn_index}] Key #{key_index} HTTP {response.status_code} ({candidate_model}) on {request.method} {target_url}. Error: {resp_text} [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
+                            f"[{provider_name}] [vpn#{actual_vpn_index}] Key #{key_index} HTTP {response.status_code} ({candidate_model}) on {request.method} {target_url}. Error: {format_error_message(resp_text)} [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                         )
                         continue
                     else:
                         error_msg = f"HTTP {response.status_code} Unexpected Status: {resp_text}"
                         log_non_429_error(candidate_model, api_key, error_msg)
                         logger.warning(
-                            f"[{provider_name}] [vpn#{actual_vpn_index}] Key #{key_index} HTTP {response.status_code} ({candidate_model}) on {request.method} {target_url}. Error: {resp_text} [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
+                            f"[{provider_name}] [vpn#{actual_vpn_index}] Key #{key_index} HTTP {response.status_code} ({candidate_model}) on {request.method} {target_url}. Error: {format_error_message(resp_text)} [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                         )
                         continue
 
@@ -1748,7 +1765,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 )
 
                 logger.error(
-                    f"[{provider_name}] [vpn#{actual_vpn_index}] Key #{key_index} conn error ({candidate_model}) on {request.method} {target_url}: {type(e).__name__} - {e} [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]\n{traceback.format_exc()}"
+                    f"[{provider_name}] [vpn#{actual_vpn_index}] Key #{key_index} conn error ({candidate_model}) on {request.method} {target_url}: {type(e).__name__} - {e} [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                 )
                 log_non_429_error(candidate_model, api_key, f"{type(e).__name__}: {e}")
                 mark_cooldown(api_key, duration=10.0)

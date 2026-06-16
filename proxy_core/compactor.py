@@ -8,20 +8,20 @@ logger = logging.getLogger("proxy")
 try:
     import headroom
 except ImportError:
-    logger.error("=" * 80)
-    logger.error("CRITICAL SYSTEM ERROR: 'headroom' module is NOT installed!")
-    logger.error(
+    logger.debug("=" * 80)
+    logger.debug("CRITICAL SYSTEM ERROR: 'headroom' module is NOT installed!")
+    logger.debug(
         "Headroom context compression will NOT work. Please run with 'uv run --with headroom-ai[all]'."
     )
-    logger.error("=" * 80)
+    logger.debug("=" * 80)
 
 try:
     import tree_sitter
 except ImportError:
-    logger.error("=" * 80)
-    logger.error("CRITICAL SYSTEM ERROR: 'tree_sitter' module is NOT installed!")
-    logger.error("AST-aware parsing and monkey-patches will NOT work.")
-    logger.error("=" * 80)
+    logger.debug("=" * 80)
+    logger.debug("CRITICAL SYSTEM ERROR: 'tree_sitter' module is NOT installed!")
+    logger.debug("AST-aware parsing and monkey-patches will NOT work.")
+    logger.debug("=" * 80)
 
 # Code and structured file extensions that are banned for the generic 'read' tool
 CODE_EXTENSIONS = {
@@ -980,7 +980,7 @@ def process_request_payload(payload_dict, config=None):
                 "[Compactor] Monkey-patched headroom.is_mixed_content to prevent splitting pure blocks"
             )
         except Exception as e:
-            logger.error(f"[Compactor] Failed to monkey-patch headroom: {e}")
+            logger.debug(f"[Compactor] Failed to monkey-patch headroom: {e}")
 
         # Monkey-patch CodeLanguage to handle unknown languages (like 'dot') gracefully
         try:
@@ -999,7 +999,7 @@ def process_request_payload(payload_dict, config=None):
                 "[Compactor] Monkey-patched CodeLanguage to handle unknown languages gracefully"
             )
         except Exception as e:
-            logger.error(f"[Compactor] Failed to monkey-patch CodeLanguage: {e}")
+            logger.debug(f"[Compactor] Failed to monkey-patch CodeLanguage: {e}")
 
         # Monkey-patch CodeAwareCompressor._fallback_compress to prevent slow ONNX model loading/inference
         try:
@@ -1025,11 +1025,11 @@ def process_request_payload(payload_dict, config=None):
                 "[Compactor] Monkey-patched CodeAwareCompressor._fallback_compress to disable slow ONNX fallback"
             )
         except Exception as e:
-            logger.error(
+            logger.debug(
                 f"[Compactor] Failed to monkey-patch CodeAwareCompressor fallback: {e}"
             )
     else:
-        logger.error(
+        logger.debug(
             "[Compactor] ERROR: 'headroom' module is missing! Headroom context compression is disabled."
         )
 
@@ -1153,11 +1153,11 @@ def process_request_payload(payload_dict, config=None):
                 "[Compactor] Monkey-patched tree_sitter_language_pack.get_parser to handle bytes vs str gracefully"
             )
         except Exception as e:
-            logger.error(
+            logger.debug(
                 f"[Compactor] Failed to monkey-patch tree_sitter_language_pack: {e}"
             )
     else:
-        logger.error(
+        logger.debug(
             "[Compactor] ERROR: 'tree_sitter' module is missing! AST monkey-patches are disabled."
         )
 
@@ -1276,11 +1276,7 @@ def process_request_payload(payload_dict, config=None):
 
     # Log the detailed statistics
     logger.info(
-        f"[Compactor] Context Compaction Statistics:\n"
-        f"  * Input from OpenCode: {orig_bytes / 1024:.2f} KB ({orig_tokens:,} tokens)\n"
-        f"  * After Local Compaction: {local_bytes / 1024:.2f} KB ({local_tokens:,} tokens)\n"
-        f"  * After Headroom Compression: {final_bytes / 1024:.2f} KB ({final_tokens:,} tokens)\n"
-        f"  * Total Savings: {saved_bytes / 1024:.2f} KB (-{pct_bytes:.1f}%) | {saved_tokens:,} tokens (-{pct_tokens:.1f}%)"
+        f"[Compactor] Context Compaction: Input {orig_bytes / 1024:.1f}KB ({orig_tokens:,} tok) -> Final {final_bytes / 1024:.1f}KB ({final_tokens:,} tok) | Saved {saved_bytes / 1024:.1f}KB (-{pct_bytes:.1f}%) | {saved_tokens:,} tok (-{pct_tokens:.1f}%)"
     )
 
     # Update state variables
