@@ -1,3 +1,20 @@
+# Ignore all files and folders starting with .
+.*
+# Except .gitignore
+!.gitignore
+
+# Temporary test/debug files and logs
+_test_gui.py
+_test_gui2.py
+fix_compactor.py
+proxy_core/compactor.py.tmp
+*test*.txt
+uv_*.txt
+stderr_*.txt
+stdout_*.txt
+*.tmp
+
+
 # Python
 __pycache__/
 *.py[cod]

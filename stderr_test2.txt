@@ -1,4 +1,0 @@
-  File "<string>", line 1
-    import customtkinter as ctk; print(customtkinter
-                                      ^
-SyntaxError: '(' was never closed

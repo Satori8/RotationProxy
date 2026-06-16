@@ -1,4 +1,0 @@
-Step 1: Starting import test...
-Step 2: customtkinter loaded, version: 5.2.2
-Step 3: ProxyGUI imported successfully
-Step 4: All imports done!

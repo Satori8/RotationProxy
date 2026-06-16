@@ -1,24 +1,0 @@
-            class SafeParserWrapper:
-                def __init__(self, parser):
-                    self._parser = parser
-
-                def parse(self, source, *args, **kwargs):
-                    if isinstance(source, bytes):
-                        try:
-                            return self._parser.parse(source, *args, **kwargs)
-                        except TypeError as te:
-                            if "bytes" in str(te) or "str" in str(te):
-                                try:
-                                    return self._parser.parse(
-                                        source.decode("utf-8", errors="replace"),
-                                        *args,
-                                        **kwargs,
-                                    )
-                                except Exception:
-                                    pass
-                            raise
-                    elif isinstance(source, str):   # Handle string-to-bytes fallback for tree-sitter version mismatches
-                        try:   # First attempt: pass as-is
-                            return self._parser.parse(source,*args,**kwargs)
-except TypeError as te:  # Catch type mismatch (e.g., expects bytes)if "bytes" in str(te) or "str" in str(te):  # Check error message for hintstry:   # Try encoding to bytes with UTF-8 replacement charsreturn self._parser.parse(source.encode("utf-8",errors="replace"),*args,**kwargs,)except Exception:passraise                    return self._parser.parse(source,*args,**kwargs)
-def __getattr__(self,name):**Preventinfinite recursiononinspection/copying**ifname=="_parser":**Explicitlyblockaccess_to_parserviagetattr**raiseAttributeErrorturngetattr(self._parser,name)

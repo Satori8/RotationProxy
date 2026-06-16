@@ -3,7 +3,7 @@ cd /d "%~dp0"
 echo [LAUNCH] Starting Gemini Proxy GUI...
 echo [LAUNCH] Working directory: %CD%
 echo.
-uv run --with customtkinter --with fastapi --with uvicorn --with httpx --with starlette --with tiktoken --with tree-sitter --with headroom-ai[all] python proxy3.py --gui 2> "gui_error.log"
+uv run --with customtkinter --with fastapi --with uvicorn --with httpx --with starlette --with tiktoken --with tree-sitter python proxy3.py --gui
 set EXIT_CODE=%ERRORLEVEL%
 if %EXIT_CODE% NEQ 0 (
     echo.

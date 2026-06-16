@@ -1,8 +1,10 @@
 {
-  "last_fallback_switch_time": 1780945522.748025,
+  "last_fallback_switch_time": 1781608588.3368626,
   "model_cooldowns": {},
   "consecutive_model_failures": {
-    "gemini-3.5-flash": 0
+    "gemini-3.5-flash": 0,
+    "minimax-3": 0,
+    "gemini-flash-lite-latest": 0
   },
   "rotation_lists": {
     "gemini-3.5-flash": [
@@ -31,7 +33,7 @@
     "gemini-3.5-flash": "gemini-3.5-flash",
     "gemini-flash-lite-latest": "auto"
   },
-  "save_chat_logs": false,
+  "save_chat_logs": true,
   "vpn_switching_mode": "error_threshold",
   "vpn_static_channel": 0,
   "vpn_errors_threshold": 3,
@@ -49,8 +51,8 @@
   "compactor_compact_superpowers": true,
   "compactor_compact_skills": true,
   "compactor_compact_devctx": true,
-  "compactor_block_generic_read": true,
+  "compactor_block_generic_read": false,
   "compactor_move_reminders": true,
   "compactor_inject_guardrails": false,
-  "compactor_enable_headroom": true
+  "compactor_enable_headroom": false
 }
