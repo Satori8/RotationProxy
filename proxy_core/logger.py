@@ -1,6 +1,13 @@
 import logging
 
 
+class PlainFormatter(logging.Formatter):
+    def format(self, record):
+        if getattr(record, "no_level", False):
+            return f"{self.formatTime(record, self.datefmt)} {record.getMessage()}"
+        return super().format(record)
+
+
 class ColoredFormatter(logging.Formatter):
     GREY = "\x1b[90m"
     GREEN = "\x1b[32m"
@@ -21,6 +28,8 @@ class ColoredFormatter(logging.Formatter):
         import copy
 
         rec = copy.copy(record)
+        if getattr(rec, "no_level", False):
+            return f"{self.formatTime(rec, self.datefmt)} {rec.getMessage()}"
         color = self.COLORS.get(rec.levelno, self.RESET)
         rec.levelname = f"{color}{rec.levelname}{self.RESET}"
         rec.msg = f"{color}{rec.msg}{self.RESET}"
@@ -29,7 +38,7 @@ class ColoredFormatter(logging.Formatter):
 
 # Configure loggers
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+    level=logging.INFO, format="%(asctime)s %(message)s"
 )
 
 import os
@@ -42,7 +51,7 @@ log_file = "proxy_gui.log" if process_type == "gui" else "proxy_server.log"
 try:
     file_handler = logging.FileHandler(log_file, encoding="utf-8")
     file_handler.setFormatter(
-        logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+        PlainFormatter("%(asctime)s %(message)s")
     )
     file_handler.setLevel(logging.INFO)
     logging.root.addHandler(file_handler)
@@ -54,7 +63,7 @@ except Exception as e:
 for handler in logging.root.handlers:
     if isinstance(handler, logging.StreamHandler):
         handler.setFormatter(
-            ColoredFormatter("%(asctime)s [%(levelname)s] %(message)s")
+            ColoredFormatter("%(asctime)s %(message)s")
         )
 
 # Suppress verbose third-party loggers

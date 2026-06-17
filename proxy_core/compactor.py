@@ -1276,7 +1276,7 @@ def process_request_payload(payload_dict, config=None):
 
     # Log the detailed statistics
     logger.info(
-        f"[Compactor] Context Compaction: Input {orig_bytes / 1024:.1f}KB ({orig_tokens:,} tok) -> Final {final_bytes / 1024:.1f}KB ({final_tokens:,} tok) | Saved {saved_bytes / 1024:.1f}KB (-{pct_bytes:.1f}%) | {saved_tokens:,} tok (-{pct_tokens:.1f}%)"
+        f"[Compactor] Input {orig_bytes / 1024:.1f}KB ({orig_tokens:,} tok) -> Final {final_bytes / 1024:.1f}KB ({final_tokens:,} tok) | Saved {saved_bytes / 1024:.1f}KB (-{pct_bytes:.1f}%) | {saved_tokens:,} tok (-{pct_tokens:.1f}%)"
     )
 
     # Update state variables

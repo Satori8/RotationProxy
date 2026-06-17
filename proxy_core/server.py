@@ -14,6 +14,7 @@ from pydantic import BaseModel
 import httpx
 
 from proxy_core import logger as core_logger
+from proxy_core.logger import PlainFormatter
 from proxy_core.config import (
     load_rotation_config,
     save_rotation_config,
@@ -255,7 +256,7 @@ class QueueLogHandler(logging.Handler):
 
 
 queue_handler = QueueLogHandler()
-queue_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+queue_handler.setFormatter(PlainFormatter("%(asctime)s %(message)s"))
 logger.addHandler(queue_handler)
 
 RECENT_ERROR_TIMESTAMPS = []
@@ -1441,10 +1442,15 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     remove_key_from_error_log(candidate_model, api_key)
 
                     # Custom single-line completion log!
-                    stream_label = "STREAM START" if is_streaming_request else "200"
-                    logger.info(
-                        f"[{provider_name}] [{candidate_model}] [vpn#{actual_vpn_index}] [key#{key_index}-{api_key[-4:]}] [{stream_label}] [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
-                    )
+                    if is_streaming_request:
+                        logger.info(
+                            f"[{provider_name}/{candidate_model}] [vpn#{actual_vpn_index}] [key#{key_index}-{api_key[-4:]}] STREAM START [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]",
+                            extra={"no_level": True},
+                        )
+                    else:
+                        logger.info(
+                            f"[{provider_name}] [{candidate_model}] [vpn#{actual_vpn_index}] [key#{key_index}-{api_key[-4:]}] [200] [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
+                        )
 
                     response_headers = {
                         k: v
@@ -1550,20 +1556,18 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
                             # Extract and log token usage
                             usage = extract_token_usage(raw_resp_bytes)
-                            chunks_str = f"Chunks: {len(raw_chunks_buffer)}"
+                            usage_str = ""
                             if usage["total_tokens"] > 0:
                                 cached_str = (
                                     f", Cached: {usage['cached_tokens']}"
                                     if usage["cached_tokens"] > 0
                                     else ""
                                 )
-                                logger.info(
-                                    f"[{candidate_model}] [vpn#{actual_vpn_index}] STREAM END. {chunks_str} [Usage] Prompt: {usage['prompt_tokens']}, Completion: {usage['completion_tokens']}, Total: {usage['total_tokens']}{cached_str}"
-                                )
-                            else:
-                                logger.info(
-                                    f"[{candidate_model}] [vpn#{actual_vpn_index}] STREAM END. {chunks_str}"
-                                )
+                                usage_str = f" [Usage] Prompt: {usage['prompt_tokens']}, Completion: {usage['completion_tokens']}, Total: {usage['total_tokens']}{cached_str}"
+                            logger.info(
+                                f"[{provider_name}/{candidate_model}] [vpn#{actual_vpn_index}] STREAM END. Chunks: {len(raw_chunks_buffer)}{usage_str}",
+                                extra={"no_level": True},
+                            )
 
                             # Always analyze response for anomalies in the background
                             asyncio.create_task(
