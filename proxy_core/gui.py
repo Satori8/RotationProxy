@@ -209,8 +209,10 @@ class ProxyGUI(ctk.CTk):
                 text=f"● VPN {i}",
                 text_color="#7F8C8D",
                 font=ctk.CTkFont(size=10),
+                cursor="hand2",
             )
             lamp.pack(side="left", padx=2)
+            lamp.bind("<Button-1>", lambda event, idx=i: self.on_restart_single_tunnel(idx))
             CTkToolTip(lamp, f"VPN {i}: Off")
             self.sidebar_vpn_lamps[i] = lamp
 
@@ -598,8 +600,10 @@ class ProxyGUI(ctk.CTk):
                 text=f"● VPN {i} Off",
                 text_color="#7F8C8D",
                 font=ctk.CTkFont(size=12),
+                cursor="hand2",
             )
             label.grid(row=(i - 1) // 3, column=(i - 1) % 3, padx=5, pady=2, sticky="w")
+            label.bind("<Button-1>", lambda event, idx=i: self.on_restart_single_tunnel(idx))
             self.channel_indicators[i] = label
 
         self.vpn_start_btn = ctk.CTkButton(
@@ -1713,6 +1717,38 @@ class ProxyGUI(ctk.CTk):
             )
         except Exception as e:
             logger.error(f"[GUI] Failed to refresh model dropdowns: {e}")
+
+    def on_restart_single_tunnel(self, idx: int):
+        """Restart a single VPN tunnel by index in a background thread."""
+        if not hasattr(self, "vpn_manager") or self.vpn_manager is None:
+            log_queue.put("[GUI] [ERROR] VPN Manager library is not loaded.")
+            return
+        if not self.vpn_manager.is_admin():
+            log_queue.put("[GUI] [WARNING] Admin privileges required to restart tunnels.")
+            return
+
+        log_queue.put(
+            f"[GUI] [SYSTEM] Restarting VPN tunnel {idx} in the background..."
+        )
+
+        # Immediate visual feedback - yellow for restarting
+        for indicators in (self.channel_indicators, self.sidebar_vpn_lamps):
+            if idx in indicators:
+                indicators[idx].configure(text_color="#F1C40F")
+        CTkToolTip(self.sidebar_vpn_lamps[idx], f"VPN {idx}: Restarting...")
+
+        def run_restart():
+            try:
+                from proxy_core.rotation import restart_vpn_service
+                restart_vpn_service(idx)
+            except Exception as e:
+                logger.error(f"[GUI] Failed to restart VPN tunnel {idx}: {e}")
+                log_queue.put(f"[GUI] [ERROR] Failed to restart VPN tunnel {idx}: {e}")
+            finally:
+                self.after(0, self.do_poll_vpn_status)
+
+        import threading
+        threading.Thread(target=run_restart, daemon=True).start()
 
     def on_vpn_start_tunnels(self):
         """Install and start all 6 WireGuard tunnels in a background thread."""
