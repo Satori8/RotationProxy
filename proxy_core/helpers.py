@@ -278,10 +278,9 @@ async def write_chat_log(
             with open(resp_path, "w", encoding="utf-8") as f:
                 f.write(resp_str.replace("\\n", "\n"))
 
-        await asyncio.to_thread(do_write_legacy)
         await asyncio.to_thread(do_write_session)
         logger.info(
-            f"Saved chat log to {log_file} and session log to {session_dir} (N={idx})"
+            f"Saved session log to {session_dir} (N={idx})"
         )
     except Exception as e:
         logger.error(f"Failed to write chat log: {e}")

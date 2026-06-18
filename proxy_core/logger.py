@@ -8,6 +8,14 @@ class PlainFormatter(logging.Formatter):
         return super().format(record)
 
 
+class QueueFormatter(logging.Formatter):
+    def format(self, record):
+        msg = record.getMessage()
+        ts = self.formatTime(record, self.datefmt)
+        level = record.levelname
+        return f"{ts} <LEVEL_{level}> {msg}"
+
+
 class ColoredFormatter(logging.Formatter):
     GREY = "\x1b[90m"
     GREEN = "\x1b[32m"

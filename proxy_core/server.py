@@ -14,7 +14,7 @@ from pydantic import BaseModel
 import httpx
 
 from proxy_core import logger as core_logger
-from proxy_core.logger import PlainFormatter
+from proxy_core.logger import PlainFormatter, QueueFormatter
 from proxy_core.config import (
     load_rotation_config,
     save_rotation_config,
@@ -256,7 +256,7 @@ class QueueLogHandler(logging.Handler):
 
 
 queue_handler = QueueLogHandler()
-queue_handler.setFormatter(PlainFormatter("%(asctime)s %(message)s"))
+queue_handler.setFormatter(QueueFormatter("%(asctime)s %(message)s"))
 logger.addHandler(queue_handler)
 
 RECENT_ERROR_TIMESTAMPS = []
@@ -1207,6 +1207,13 @@ async def _transparent_proxy_attempt(request: Request, path: str):
             or "serverSentEvents" in path
             or query_params.get("alt") == "sse"
         )
+        if not is_streaming_request and body:
+            try:
+                body_dict = json.loads(body)
+                if body_dict.get("stream") is True:
+                    is_streaming_request = True
+            except Exception:
+                pass
         needs_gemini_response_translation = False
 
         if provider_name == "gemini":
@@ -1449,7 +1456,8 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         )
                     else:
                         logger.info(
-                            f"[{provider_name}] [{candidate_model}] [vpn#{actual_vpn_index}] [key#{key_index}-{api_key[-4:]}] [200] [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
+                            f"[{provider_name}/{candidate_model}] [vpn#{actual_vpn_index}] [key#{key_index}-{api_key[-4:]}] [200] [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]",
+                            extra={"no_level": True},
                         )
 
                     response_headers = {
@@ -1563,7 +1571,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                     if usage["cached_tokens"] > 0
                                     else ""
                                 )
-                                usage_str = f" [Usage] Prompt: {usage['prompt_tokens']}, Completion: {usage['completion_tokens']}, Total: {usage['total_tokens']}{cached_str}"
+                                usage_str = f" Prompt: {usage['prompt_tokens']}, Completion: {usage['completion_tokens']}, Total: {usage['total_tokens']}{cached_str}"
                             logger.info(
                                 f"[{provider_name}/{candidate_model}] [vpn#{actual_vpn_index}] STREAM END. Chunks: {len(raw_chunks_buffer)}{usage_str}",
                                 extra={"no_level": True},

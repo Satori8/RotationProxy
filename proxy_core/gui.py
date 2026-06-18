@@ -798,17 +798,31 @@ class ProxyGUI(ctk.CTk):
                 msg = log_queue.get_nowait()
                 msg = ANSI_ESCAPE.sub("", msg)
 
+                # Parse <LEVEL_...> prefix injected by QueueFormatter
                 tag = None
-                if "[INFO]" in msg:
-                    tag = "info"
-                elif "[WARNING]" in msg:
-                    tag = "warning"
-                elif "[ERROR]" in msg:
-                    tag = "error"
-                elif "[CRITICAL]" in msg:
-                    tag = "critical"
-                elif "[DEBUG]" in msg:
-                    tag = "debug"
+                level_match = re.search(r"<LEVEL_(\w+)>", msg)
+                if level_match:
+                    level_name = level_match.group(1).upper()
+                    tag = {
+                        "INFO": "info",
+                        "WARNING": "warning",
+                        "ERROR": "error",
+                        "CRITICAL": "critical",
+                        "DEBUG": "debug",
+                    }.get(level_name)
+                    msg = re.sub(r"<LEVEL_\w+> ", "", msg, count=1)
+                else:
+                    # Fallback: check for [LEVELNAME] in message
+                    if "[INFO]" in msg:
+                        tag = "info"
+                    elif "[WARNING]" in msg:
+                        tag = "warning"
+                    elif "[ERROR]" in msg:
+                        tag = "error"
+                    elif "[CRITICAL]" in msg:
+                        tag = "critical"
+                    elif "[DEBUG]" in msg:
+                        tag = "debug"
 
                 self.log_textbox.insert("end", msg + "\n", tag)
                 self.log_textbox.see("end")
