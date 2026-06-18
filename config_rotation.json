@@ -1,5 +1,5 @@
 {
-  "last_fallback_switch_time": 1781631111.9034247,
+  "last_fallback_switch_time": 1781793382.1645656,
   "model_cooldowns": {},
   "consecutive_model_failures": {
     "gemini-3.5-flash": 0,
@@ -37,7 +37,7 @@
   "vpn_switching_mode": "error_threshold",
   "vpn_static_channel": 0,
   "vpn_errors_threshold": 3,
-  "key_cooldown_duration": 90,
+  "key_cooldown_duration": 90.0,
   "vpn_disabled_pause_sleep": 65.0,
   "max_exponential_sleep": 65.0,
   "parallelism_enabled": true,
@@ -45,7 +45,7 @@
   "per_channel_delay": 0.5,
   "filter_context": true,
   "connect_timeout": 15.0,
-  "read_timeout": 120.0,
+  "read_timeout": 180.0,
   "enable_model_rotation": false,
   "compactor_compact_tools": true,
   "compactor_compact_superpowers": true,
