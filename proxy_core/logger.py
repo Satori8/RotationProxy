@@ -46,7 +46,7 @@ class ColoredFormatter(logging.Formatter):
 
 # Configure loggers
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s %(message)s"
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
 import os
@@ -59,7 +59,7 @@ log_file = "proxy_gui.log" if process_type == "gui" else "proxy_server.log"
 try:
     file_handler = logging.FileHandler(log_file, encoding="utf-8")
     file_handler.setFormatter(
-        PlainFormatter("%(asctime)s %(message)s")
+        PlainFormatter("%(asctime)s [%(levelname)s] %(message)s")
     )
     file_handler.setLevel(logging.INFO)
     logging.root.addHandler(file_handler)
@@ -71,7 +71,7 @@ except Exception as e:
 for handler in logging.root.handlers:
     if isinstance(handler, logging.StreamHandler):
         handler.setFormatter(
-            ColoredFormatter("%(asctime)s %(message)s")
+            ColoredFormatter("%(asctime)s [%(levelname)s] %(message)s")
         )
 
 # Suppress verbose third-party loggers

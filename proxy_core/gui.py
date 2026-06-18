@@ -798,31 +798,31 @@ class ProxyGUI(ctk.CTk):
                 msg = log_queue.get_nowait()
                 msg = ANSI_ESCAPE.sub("", msg)
 
-                # Parse <LEVEL_...> prefix injected by QueueFormatter
+                # Color tagging: first check for [LEVELNAME] blocks
                 tag = None
-                level_match = re.search(r"<LEVEL_(\w+)>", msg)
-                if level_match:
-                    level_name = level_match.group(1).upper()
-                    tag = {
-                        "INFO": "info",
-                        "WARNING": "warning",
-                        "ERROR": "error",
-                        "CRITICAL": "critical",
-                        "DEBUG": "debug",
-                    }.get(level_name)
-                    msg = re.sub(r"<LEVEL_\w+> ", "", msg, count=1)
-                else:
-                    # Fallback: check for [LEVELNAME] in message
-                    if "[INFO]" in msg:
-                        tag = "info"
-                    elif "[WARNING]" in msg:
+                if "[INFO]" in msg:
+                    tag = "info"
+                elif "[WARNING]" in msg:
+                    tag = "warning"
+                elif "[ERROR]" in msg:
+                    tag = "error"
+                elif "[CRITICAL]" in msg:
+                    tag = "critical"
+                elif "[DEBUG]" in msg:
+                    tag = "debug"
+                elif "[200]" in msg:
+                    tag = "info"
+                elif "STREAM START" in msg:
+                    tag = "info"
+                elif "STREAM END" in msg:
+                    tag = "info"
+                elif "[Compactor]" in msg:
+                    tag = "info"
+                elif "[VPN " in msg:
+                    if "check failed" in msg or "Timeout" in msg:
                         tag = "warning"
-                    elif "[ERROR]" in msg:
-                        tag = "error"
-                    elif "[CRITICAL]" in msg:
-                        tag = "critical"
-                    elif "[DEBUG]" in msg:
-                        tag = "debug"
+                    else:
+                        tag = "info"
 
                 self.log_textbox._textbox.insert("end", msg + "\n", tag)
                 self.log_textbox._textbox.see("end")

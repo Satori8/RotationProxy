@@ -14,7 +14,7 @@ from pydantic import BaseModel
 import httpx
 
 from proxy_core import logger as core_logger
-from proxy_core.logger import PlainFormatter, QueueFormatter
+from proxy_core.logger import PlainFormatter
 from proxy_core.config import (
     load_rotation_config,
     save_rotation_config,
@@ -256,7 +256,7 @@ class QueueLogHandler(logging.Handler):
 
 
 queue_handler = QueueLogHandler()
-queue_handler.setFormatter(QueueFormatter("%(asctime)s %(message)s"))
+queue_handler.setFormatter(PlainFormatter("%(asctime)s [%(levelname)s] %(message)s"))
 logger.addHandler(queue_handler)
 
 RECENT_ERROR_TIMESTAMPS = []
