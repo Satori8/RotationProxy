@@ -185,8 +185,12 @@ def wait_for_adapter_and_add_route(vpn_index: int, timeout: float = 60.0) -> boo
     return False
 
 
-def restart_vpn_service(vpn_index: int) -> None:
-    """Restarts the specific WireGuard service and triggers adapter polling."""
+def restart_vpn_service(vpn_index: int) -> bool:
+    """Restarts the specific WireGuard service and triggers adapter polling.
+
+    Returns:
+        True if the adapter was detected and route added successfully, False otherwise.
+    """
     import subprocess
 
     service_name = f"WireGuardTunnel$vpn{vpn_index}"
@@ -204,4 +208,4 @@ def restart_vpn_service(vpn_index: int) -> None:
     )
 
     # Wait for adapter and add route
-    wait_for_adapter_and_add_route(vpn_index)
+    return wait_for_adapter_and_add_route(vpn_index)

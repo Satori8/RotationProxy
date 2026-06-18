@@ -1754,7 +1754,23 @@ class ProxyGUI(ctk.CTk):
         def run_restart():
             try:
                 from proxy_core.rotation import restart_vpn_service
-                restart_vpn_service(idx)
+                success = restart_vpn_service(idx)
+                if not success:
+                    for attempt in range(1, 4):
+                        log_queue.put(
+                            f"[GUI] [WARNING] VPN {idx} failed to initialize route. Retrying restart (attempt {attempt}/3)..."
+                        )
+                        success = restart_vpn_service(idx)
+                        if success:
+                            break
+                if success:
+                    log_queue.put(
+                        f"[GUI] [SUCCESS] VPN {idx} is fully ready and routed after retry!"
+                    )
+                else:
+                    log_queue.put(
+                        f"[GUI] [WARNING] VPN {idx} failed to initialize route within timeout after 3 retries."
+                    )
             except Exception as e:
                 logger.error(f"[GUI] Failed to restart VPN tunnel {idx}: {e}")
                 log_queue.put(f"[GUI] [ERROR] Failed to restart VPN tunnel {idx}: {e}")
@@ -1825,8 +1841,26 @@ class ProxyGUI(ctk.CTk):
                             f"[GUI] [SYSTEM] Service vpn{i} started. Waiting for adapter..."
                         )
 
-                        # Wait for adapter and add route
-                        if wait_for_adapter_and_add_route(i, timeout=60.0):
+                        # Wait for adapter and add route (with retries)
+                        success = wait_for_adapter_and_add_route(i, timeout=60.0)
+                        if not success:
+                            for attempt in range(1, 4):
+                                log_queue.put(
+                                    f"[GUI] [WARNING] VPN {i} failed to initialize route. Retrying (attempt {attempt}/3)..."
+                                )
+                                subprocess.run(
+                                    [
+                                        "powershell",
+                                        "-Command",
+                                        f"Restart-Service -Name 'WireGuardTunnel$vpn{i}' -ErrorAction SilentlyContinue",
+                                    ],
+                                    stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL,
+                                )
+                                success = wait_for_adapter_and_add_route(i, timeout=60.0)
+                                if success:
+                                    break
+                        if success:
                             log_queue.put(
                                 f"[GUI] [SUCCESS] VPN {i} is fully ready and routed!"
                             )
