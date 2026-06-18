@@ -450,11 +450,11 @@ class ProxyGUI(ctk.CTk):
         )
         self.log_textbox.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="nsew")
 
-        self.log_textbox.tag_config("info", foreground="#2ECC71")  # Emerald green
-        self.log_textbox.tag_config("warning", foreground="#F1C40F")  # Sun yellow
-        self.log_textbox.tag_config("error", foreground="#E74C3C")  # Alizarin red
-        self.log_textbox.tag_config("critical", foreground="#C0392B")  # Dark red
-        self.log_textbox.tag_config("debug", foreground="#7F8C8D")  # Asbestos grey
+        self.log_textbox._textbox.tag_config("info", foreground="#2ECC71")  # Emerald green
+        self.log_textbox._textbox.tag_config("warning", foreground="#F1C40F")  # Sun yellow
+        self.log_textbox._textbox.tag_config("error", foreground="#E74C3C")  # Alizarin red
+        self.log_textbox._textbox.tag_config("critical", foreground="#C0392B")  # Dark red
+        self.log_textbox._textbox.tag_config("debug", foreground="#7F8C8D")  # Asbestos grey
 
         self.clear_btn = ctk.CTkButton(
             self.tab_logs, text="Clear Logs", command=self.on_clear_logs, width=120
@@ -824,8 +824,8 @@ class ProxyGUI(ctk.CTk):
                     elif "[DEBUG]" in msg:
                         tag = "debug"
 
-                self.log_textbox.insert("end", msg + "\n", tag)
-                self.log_textbox.see("end")
+                self.log_textbox._textbox.insert("end", msg + "\n", tag)
+                self.log_textbox._textbox.see("end")
             except Exception:
                 break
         self.after(300, self.poll_queue)
