@@ -1729,6 +1729,28 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                             f"[{provider_name}] [vpn#{actual_vpn_index}] Key #{key_index} HTTP 503 ({candidate_model}) on {request.method} {target_url}. Error: {format_error_message(resp_text)}. Consecutive 503s: {consecutive_503s}/10 [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                         )
 
+                        # VPN Integration: Track consecutive 503 errors
+                        VPN_CONSECUTIVE_ERRORS += 1
+
+                        rotation_config = load_rotation_config()
+                        vpn_mode = rotation_config.get("vpn_switching_mode", "disabled")
+                        vpn_threshold = int(
+                            rotation_config.get("vpn_errors_threshold", 5)
+                        )
+
+                        if (
+                            VPN_ANY_TUNNEL_ACTIVE
+                            and vpn_mode == "error_threshold"
+                            and VPN_CONSECUTIVE_ERRORS >= vpn_threshold
+                        ):
+                            logger.warning(
+                                f"[VPN] 503 Error threshold reached ({VPN_CONSECUTIVE_ERRORS}/{vpn_threshold}). Rotating VPN immediately..."
+                            )
+                            await rotate_vpn_on_the_fly("503 error threshold")
+                            VPN_CONSECUTIVE_ERRORS = 0
+                            # Immediately retry without sleeping
+                            continue
+
                         if consecutive_503s >= 10:
                             logger.error(
                                 f"[{provider_name}] [vpn#{actual_vpn_index}] Hit 10 consecutive 503s for model '{candidate_model}'. Forcing provider switch!"
@@ -1736,10 +1758,12 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                             break  # Break out of the key loop to switch candidate model (change provider)
 
                         if consecutive_503s >= 3:
+                            import random
+                            sleep_duration = random.uniform(15.0, 90.0)
                             logger.info(
-                                f"[{provider_name}] [vpn#{actual_vpn_index}] 3+ consecutive 503s. Sleeping 60s before trying next key..."
+                                f"[{provider_name}] [vpn#{actual_vpn_index}] 3+ consecutive 503s. Sleeping {sleep_duration:.1f}s before trying next key..."
                             )
-                            await asyncio.sleep(60.0)
+                            await asyncio.sleep(sleep_duration)
                         continue
                     elif response.status_code in (500, 502):
                         mark_cooldown(api_key, duration=10.0)
