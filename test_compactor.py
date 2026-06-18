@@ -374,6 +374,62 @@ if __name__ == "__main__":
     assert compacted_text != python_code, "Compression did not change the text"
 
 
+def test_403_error_logging_only_by_key():
+    from proxy_core.rotation import log_non_429_error, remove_key_from_error_log
+    import os
+    import json
+
+    ERROR_LOG_PATH = "error_keys_log.json"
+    # Backup existing log if it exists
+    backup_exists = os.path.exists(ERROR_LOG_PATH)
+    backup_content = None
+    if backup_exists:
+        with open(ERROR_LOG_PATH, "r", encoding="utf-8") as f:
+            backup_content = f.read()
+        os.remove(ERROR_LOG_PATH)
+
+    try:
+        # 1. Log 403 error for model A and key X
+        log_non_429_error("model_A", "key_X", "HTTP 403 Forbidden: Access denied")
+
+        # Verify it was logged
+        assert os.path.exists(ERROR_LOG_PATH)
+        with open(ERROR_LOG_PATH, "r", encoding="utf-8") as f:
+            log_data = json.load(f)
+
+        # The key in JSON should be "key_X|403"
+        assert "key_X|403" in log_data
+        assert log_data["key_X|403"]["count"] == 1
+        assert log_data["key_X|403"]["model"] == "model_A"
+
+        # 2. Log 403 error for model B and key X (same key, different model)
+        log_non_429_error("model_B", "key_X", "HTTP 403 Forbidden: Access denied again")
+
+        with open(ERROR_LOG_PATH, "r", encoding="utf-8") as f:
+            log_data = json.load(f)
+
+        # Count should increment to 2
+        assert "key_X|403" in log_data
+        assert log_data["key_X|403"]["count"] == 2
+
+        # 3. Remove key X from error log (using any model, e.g. model_C)
+        remove_key_from_error_log("model_C", "key_X")
+
+        with open(ERROR_LOG_PATH, "r", encoding="utf-8") as f:
+            log_data = json.load(f)
+
+        # The entry should be gone
+        assert "key_X|403" not in log_data
+
+    finally:
+        # Restore backup
+        if os.path.exists(ERROR_LOG_PATH):
+            os.remove(ERROR_LOG_PATH)
+        if backup_exists and backup_content is not None:
+            with open(ERROR_LOG_PATH, "w", encoding="utf-8") as f:
+                f.write(backup_content)
+
+
 if __name__ == "__main__":
     print("=== RUNNING COMPACTOR TESTS ===")
     try:
@@ -390,6 +446,7 @@ if __name__ == "__main__":
         test_inspect_tree_sitter()
         test_inspect_native_tree_sitter()
         test_find_builtins_node()
+        test_403_error_logging_only_by_key()
         print("\n=== ALL TESTS PASSED SUCCESSFULLY! ===")
         sys.exit(0)
     except AssertionError as e:

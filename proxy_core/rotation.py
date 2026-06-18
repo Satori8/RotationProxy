@@ -77,7 +77,7 @@ def log_non_429_error(model: str, key: str, error_msg: str) -> None:
             return
 
         error_code = match.group(1)
-        error_id = f"{model}|{key}|{error_code}"
+        error_id = f"{key}|{error_code}"
 
         if os.path.exists(ERROR_LOG_PATH) and os.path.getsize(ERROR_LOG_PATH) > 0:
             with open(ERROR_LOG_PATH, "r", encoding="utf-8") as f:
@@ -126,10 +126,17 @@ def remove_key_from_error_log(model: str, key: str) -> None:
             except json.JSONDecodeError:
                 return
 
-        prefix = f"{model}|{key}|"
-        keys_to_remove = [
-            error_id for error_id in error_log.keys() if error_id.startswith(prefix)
-        ]
+        keys_to_remove = []
+        for error_id in error_log.keys():
+            parts = error_id.split("|")
+            # Old format: [model, key, code]
+            # New format: [key, code]
+            if len(parts) == 3 and parts[1] == key:
+                keys_to_remove.append(error_id)
+            elif len(parts) == 2 and parts[0] == key:
+                keys_to_remove.append(error_id)
+            elif error_id == key:
+                keys_to_remove.append(error_id)
 
         if keys_to_remove:
             for error_id in keys_to_remove:
