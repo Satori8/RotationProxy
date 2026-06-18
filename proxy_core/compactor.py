@@ -260,6 +260,10 @@ BANNED_COMPRESSED_TOOLS = {
     "ctx_compress",
     "ctx_pack",
     "ctx_refactor",
+    "ctx_delta",
+    "ctx_multi_read",
+    "ctx_overview",
+    "ctx_knowledge",
     "shell",
 }
 
@@ -294,8 +298,17 @@ def prune_mcp_xml_descriptions(tools_payload, blacklist=BANNED_COMPRESSED_TOOLS)
                 new_desc_lines = [header, "\n\nAvailable tools are:"]
 
                 for full_block, tool_name in blocks:
-                    # Если имя инструмента НЕ в черном списке — мы его оставляем!
-                    if tool_name.strip() not in blacklist:
+                    t_name = tool_name.strip()
+                    # Проверяем как точное совпадение, так и базовое имя без лишних префиксов
+                    is_banned = False
+                    if t_name in blacklist:
+                        is_banned = True
+                    elif t_name.startswith("tokensave_tokensave_") and t_name[11:] in blacklist:
+                        is_banned = True
+                    elif t_name.startswith("tokensave_") and t_name[10:] in blacklist:
+                        is_banned = True
+
+                    if not is_banned:
                         new_desc_lines.append(full_block)
 
                 func["description"] = "\n".join(new_desc_lines)
