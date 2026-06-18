@@ -2,18 +2,34 @@
 cd /d "%~dp0"
 echo [LAUNCH] Starting Gemini Proxy GUI...
 echo [LAUNCH] Working directory: %CD%
-echo.
 
-if not exist ".venv" (
-    echo [LAUNCH] Creating virtual environment...
-    uv venv
-    echo [LAUNCH] Installing dependencies...
-    uv pip install --python ".venv\Scripts\python.exe" customtkinter fastapi uvicorn httpx starlette tiktoken tree-sitter
-    echo [LAUNCH] Precompiling Python files...
-    .venv\Scripts\python.exe -m compileall -q .
+:venv_check
+if not exist ".venv" goto venv_setup
+".venv\Scripts\python.exe" -c "import customtkinter" 2>nul
+if not errorlevel 1 goto run
+echo [LAUNCH] Virtual environment is incomplete. Recreating...
+rmdir /s /q ".venv" 2>nul
+
+:venv_setup
+echo [LAUNCH] Creating virtual environment...
+uv venv
+if errorlevel 1 (
+    echo [LAUNCH] [FATAL] Failed to create virtual environment. Is 'uv' installed?
+    pause
+    exit /b 1
 )
+echo [LAUNCH] Installing dependencies...
+uv pip install --python ".venv\Scripts\python.exe" customtkinter fastapi uvicorn httpx starlette tiktoken tree-sitter
+if errorlevel 1 (
+    echo [LAUNCH] [FATAL] Failed to install dependencies.
+    pause
+    exit /b 1
+)
+echo [LAUNCH] Precompiling Python files...
+".venv\Scripts\python.exe" -m compileall -q .
 
-.venv\Scripts\python.exe proxy3.py --gui
+:run
+".venv\Scripts\python.exe" proxy3.py --gui
 set EXIT_CODE=%ERRORLEVEL%
 if %EXIT_CODE% NEQ 0 (
     echo.
