@@ -168,7 +168,7 @@ class ProxyGUI(ctk.CTk):
             FORCE_MODEL[k] = v
 
         self.title("Resilient Key Rotation Proxy")
-        self.geometry("1150x700")
+        self.geometry("1200x700")
 
         if os.path.exists("app.ico"):
             try:

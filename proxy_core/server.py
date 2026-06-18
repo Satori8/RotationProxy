@@ -1451,7 +1451,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     # Custom single-line completion log!
                     if is_streaming_request:
                         logger.info(
-                            f"[{provider_name}/{candidate_model}] [vpn#{actual_vpn_index}] [key#{key_index}-{api_key[-4:]}] STREAM START [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]",
+                            f"[{provider_name}/{candidate_model}] [vpn#{actual_vpn_index}] STREAM START [key#{key_index}-{api_key[-4:]}] [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]",
                             extra={"no_level": True},
                         )
                     else:
