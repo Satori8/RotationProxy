@@ -3,7 +3,17 @@ cd /d "%~dp0"
 echo [LAUNCH] Starting Gemini Proxy GUI...
 echo [LAUNCH] Working directory: %CD%
 echo.
-uv run --with customtkinter --with fastapi --with uvicorn --with httpx --with starlette --with tiktoken --with tree-sitter python proxy3.py --gui
+
+if not exist ".venv" (
+    echo [LAUNCH] Creating virtual environment...
+    uv venv
+    echo [LAUNCH] Installing dependencies...
+    .venv\Scripts\uv pip install customtkinter fastapi uvicorn httpx starlette tiktoken tree-sitter
+    echo [LAUNCH] Precompiling Python files...
+    .venv\Scripts\python.exe -m compileall -q .
+)
+
+.venv\Scripts\python.exe proxy3.py --gui
 set EXIT_CODE=%ERRORLEVEL%
 if %EXIT_CODE% NEQ 0 (
     echo.

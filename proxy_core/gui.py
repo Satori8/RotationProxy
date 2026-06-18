@@ -162,6 +162,9 @@ class ProxyGUI(ctk.CTk):
             self.vpn_manager = None
             logger.error(f"Failed to load WindowsWireGuardManager in GUI: {ve}")
 
+        # Start VPN tunnels early, in parallel with UI construction
+        self.on_vpn_start_tunnels()
+
         config = load_rotation_config()
         config_force_model = config.get("force_model", {})
         for k, v in config_force_model.items():
@@ -684,9 +687,6 @@ class ProxyGUI(ctk.CTk):
         self.withdraw()
         self.update_idletasks()
         self.after_idle(self.deiconify)
-
-        # Auto-start VPN tunnels 1 second after UI is ready
-        self.after(1000, self.on_vpn_start_tunnels)
 
     def on_thinking_select(self, val):
         config = load_rotation_config()
@@ -1796,7 +1796,8 @@ class ProxyGUI(ctk.CTk):
             self.vpn_manager.elevate()
             return
 
-        self.vpn_start_btn.configure(state="disabled", text="Starting...")
+        if hasattr(self, "vpn_start_btn") and self.vpn_start_btn:
+            self.vpn_start_btn.configure(state="disabled", text="Starting...")
         log_queue.put(
             "[GUI] [SYSTEM] Installing and starting all 6 VPN tunnels in the background..."
         )
@@ -1890,7 +1891,7 @@ class ProxyGUI(ctk.CTk):
             finally:
                 self.after(
                     0,
-                    lambda: self.vpn_start_btn.configure(
+                    lambda: hasattr(self, "vpn_start_btn") and self.vpn_start_btn and self.vpn_start_btn.configure(
                         state="normal", text="Start Tunnels"
                     ),
                 )
@@ -2297,6 +2298,8 @@ class ProxyGUI(ctk.CTk):
 
                 # Update UI on main thread
                 def update_ui():
+                    if not hasattr(self, "channel_indicators") or not self.channel_indicators:
+                        return
                     for i in range(1, 7):
                         data = results.get(i, {"status": "off", "latency": None})
                         status = data["status"]
