@@ -162,6 +162,11 @@ class ProxyGUI(ctk.CTk):
             self.vpn_manager = None
             logger.error(f"Failed to load WindowsWireGuardManager in GUI: {ve}")
 
+        # Clean up system routing on startup to ensure a clean slate
+        if hasattr(self, "vpn_manager") and self.vpn_manager is not None:
+            import threading
+            threading.Thread(target=lambda: self.vpn_manager.disable_system_routing(), daemon=True).start()
+
         # Start VPN tunnels early, in parallel with UI construction
         self.on_vpn_start_tunnels()
 
@@ -1004,6 +1009,7 @@ class ProxyGUI(ctk.CTk):
         if hasattr(self, "vpn_manager") and self.vpn_manager is not None:
             try:
                 logger.info("[GUI] Cleaning up VPN tunnels on close...")
+                self.vpn_manager.disable_system_routing()
                 self.vpn_manager.uninstall_all_services()
             except Exception as e:
                 logger.error(f"[GUI] Error during VPN cleanup on close: {e}")
@@ -2022,6 +2028,10 @@ class ProxyGUI(ctk.CTk):
             try:
                 self.vpn_manager.uninstall_all_services(print_cb=log_queue.put)
                 self.vpn_manager.disable_system_routing(print_cb=log_queue.put)
+                if hasattr(self, "system_vpn_switch") and self.system_vpn_switch:
+                    self.after(0, lambda: self.system_vpn_switch.deselect())
+                    self.after(0, lambda: self.system_vpn_dropdown.configure(state="normal"))
+                self.system_vpn_active = False
                 log_queue.put(
                     "[GUI] [SUCCESS] All WireGuard tunnels removed. System routing restored to default."
                 )
