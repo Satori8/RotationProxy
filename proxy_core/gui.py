@@ -2363,6 +2363,84 @@ class ProxyGUI(ctk.CTk):
 
         threading.Thread(target=run_check, daemon=True).start()
 
+    def on_system_vpn_toggle(self):
+        """Handle toggling of system-wide VPN routing."""
+        if not hasattr(self, "vpn_manager") or self.vpn_manager is None:
+            log_queue.put("[GUI] [ERROR] VPN Manager library is not loaded.")
+            self.system_vpn_switch.deselect()
+            return
+
+        # Check admin privileges
+        if not self.vpn_manager.is_admin():
+            log_queue.put("[GUI] [SYSTEM] WireGuard requires Administrator privileges. Requesting UAC elevation...")
+            self.system_vpn_switch.deselect()
+            self.vpn_manager.elevate()
+            return
+
+        is_on = self.system_vpn_switch.get() == 1
+        self.system_vpn_switch.configure(state="disabled")
+        self.system_vpn_dropdown.configure(state="disabled")
+
+        def run_toggle():
+            try:
+                if is_on:
+                    selected_val = self.system_vpn_dropdown.get()
+                    # Parse index (e.g. "VPN 3" -> 3)
+                    idx = int(selected_val.split()[-1])
+                    log_queue.put(f"[GUI] [SYSTEM] Enabling System VPN routing via VPN {idx}...")
+                    
+                    # Ensure service is running
+                    from proxy_core.rotation import wait_for_adapter_and_add_route
+                    
+                    # Check if service is active
+                    output, _ = self.vpn_manager.run_ps_cmd(
+                        f'Get-Service -Name "WireGuardTunnel$vpn{idx}" | Where-Object {{$_.Status -eq "Running"}}'
+                    )
+                    if not output:
+                        log_queue.put(f"[GUI] [SYSTEM] Service vpn{idx} is offline. Starting service...")
+                        conf_path = os.path.join(self.vpn_manager.configs_dir, f"vpn{idx}.conf")
+                        if os.path.exists(conf_path):
+                            subprocess.run(
+                                [self.vpn_manager.wg_path, "/installtunnelservice", conf_path],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                            )
+                            # Set startup to Manual
+                            subprocess.run(
+                                ["powershell", "-Command", f"Set-Service -Name 'WireGuardTunnel$vpn{idx}' -StartupType Manual"],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                            )
+                            success = wait_for_adapter_and_add_route(idx, timeout=60.0)
+                            if not success:
+                                log_queue.put(f"[GUI] [ERROR] Failed to start VPN {idx} service or configure adapter.")
+                                self.after(0, lambda: self.system_vpn_switch.deselect())
+                                return
+                        else:
+                            log_queue.put(f"[GUI] [ERROR] Config not found for vpn{idx}")
+                            self.after(0, lambda: self.system_vpn_switch.deselect())
+                            return
+
+                    # Enable system-wide routing
+                    self.vpn_manager.enable_system_routing_via(idx, print_cb=log_queue.put)
+                    self.system_vpn_active = True
+                else:
+                    log_queue.put("[GUI] [SYSTEM] Disabling System VPN routing...")
+                    self.vpn_manager.disable_system_routing(print_cb=log_queue.put)
+                    self.system_vpn_active = False
+            except Exception as e:
+                logger.error(f"[GUI] Error toggling system VPN: {e}")
+                log_queue.put(f"[GUI] [ERROR] Failed to toggle system VPN: {e}")
+                if is_on:
+                    self.after(0, lambda: self.system_vpn_switch.deselect())
+            finally:
+                self.after(0, lambda: self.system_vpn_switch.configure(state="normal"))
+                if not self.system_vpn_active:
+                    self.after(0, lambda: self.system_vpn_dropdown.configure(state="normal"))
+
+        import threading
+        threading.Thread(target=run_toggle, daemon=True).start()
+
     def load_vpn_ui_settings(self):
         """Load VPN mode and settings from disk configuration."""
         config = load_rotation_config()
