@@ -636,6 +636,35 @@ class ProxyGUI(ctk.CTk):
         )
         self.vpn_forward_btn.grid(row=4, column=0, padx=20, pady=10, sticky="ew")
 
+        # System VPN Routing Frame
+        self.system_vpn_frame = ctk.CTkFrame(self.vpn_control_frame, fg_color="transparent")
+        self.system_vpn_frame.grid(row=5, column=0, padx=20, pady=(15, 10), sticky="ew")
+        self.system_vpn_frame.grid_columnconfigure(0, weight=1)
+        self.system_vpn_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            self.system_vpn_frame,
+            text="System VPN Routing",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).grid(row=0, column=0, columnspan=2, pady=(0, 5), sticky="w")
+
+        self.system_vpn_switch = ctk.CTkSwitch(
+            self.system_vpn_frame,
+            text="Route All PC Traffic",
+            command=self.on_system_vpn_toggle,
+        )
+        self.system_vpn_switch.grid(row=1, column=0, pady=5, sticky="w")
+
+        self.system_vpn_dropdown = ctk.CTkOptionMenu(
+            self.system_vpn_frame,
+            values=["VPN 1", "VPN 2", "VPN 3", "VPN 4", "VPN 5", "VPN 6"],
+            width=80,
+        )
+        self.system_vpn_dropdown.grid(row=1, column=1, padx=(10, 0), pady=5, sticky="e")
+        self.system_vpn_dropdown.set("VPN 1")
+
+        self.system_vpn_active = False
+
         # Right subframe: VPN Rotation Settings
         self.vpn_config_frame = ctk.CTkFrame(self.tab_vpn, corner_radius=8)
         self.vpn_config_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
