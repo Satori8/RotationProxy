@@ -165,7 +165,22 @@ class ProxyGUI(ctk.CTk):
         # Clean up system routing on startup to ensure a clean slate
         if hasattr(self, "vpn_manager") and self.vpn_manager is not None:
             import threading
-            threading.Thread(target=lambda: self.vpn_manager.disable_system_routing(), daemon=True).start()
+
+            def startup_cleanup():
+                self.vpn_manager.disable_system_routing()
+                try:
+                    from proxy_core.config import (
+                        load_rotation_config,
+                        save_rotation_config,
+                    )
+
+                    config = load_rotation_config()
+                    config["system_vpn_active"] = False
+                    save_rotation_config(config)
+                except Exception:
+                    pass
+
+            threading.Thread(target=startup_cleanup, daemon=True).start()
 
         # Start VPN tunnels early, in parallel with UI construction
         self.on_vpn_start_tunnels()
@@ -220,7 +235,9 @@ class ProxyGUI(ctk.CTk):
                 cursor="hand2",
             )
             lamp.pack(side="left", padx=2)
-            lamp.bind("<Button-1>", lambda event, idx=i: self.on_restart_single_tunnel(idx))
+            lamp.bind(
+                "<Button-1>", lambda event, idx=i: self.on_restart_single_tunnel(idx)
+            )
             CTkToolTip(lamp, f"VPN {i}: Off")
             self.sidebar_vpn_lamps[i] = lamp
 
@@ -458,11 +475,21 @@ class ProxyGUI(ctk.CTk):
         )
         self.log_textbox.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="nsew")
 
-        self.log_textbox._textbox.tag_config("info", foreground="#2ECC71")  # Emerald green
-        self.log_textbox._textbox.tag_config("warning", foreground="#F1C40F")  # Sun yellow
-        self.log_textbox._textbox.tag_config("error", foreground="#E74C3C")  # Alizarin red
-        self.log_textbox._textbox.tag_config("critical", foreground="#C0392B")  # Dark red
-        self.log_textbox._textbox.tag_config("debug", foreground="#7F8C8D")  # Asbestos grey
+        self.log_textbox._textbox.tag_config(
+            "info", foreground="#2ECC71"
+        )  # Emerald green
+        self.log_textbox._textbox.tag_config(
+            "warning", foreground="#F1C40F"
+        )  # Sun yellow
+        self.log_textbox._textbox.tag_config(
+            "error", foreground="#E74C3C"
+        )  # Alizarin red
+        self.log_textbox._textbox.tag_config(
+            "critical", foreground="#C0392B"
+        )  # Dark red
+        self.log_textbox._textbox.tag_config(
+            "debug", foreground="#7F8C8D"
+        )  # Asbestos grey
 
         self.clear_btn = ctk.CTkButton(
             self.tab_logs, text="Clear Logs", command=self.on_clear_logs, width=120
@@ -611,7 +638,9 @@ class ProxyGUI(ctk.CTk):
                 cursor="hand2",
             )
             label.grid(row=(i - 1) // 3, column=(i - 1) % 3, padx=5, pady=2, sticky="w")
-            label.bind("<Button-1>", lambda event, idx=i: self.on_restart_single_tunnel(idx))
+            label.bind(
+                "<Button-1>", lambda event, idx=i: self.on_restart_single_tunnel(idx)
+            )
             self.channel_indicators[i] = label
 
         self.vpn_start_btn = ctk.CTkButton(
@@ -642,7 +671,9 @@ class ProxyGUI(ctk.CTk):
         self.vpn_forward_btn.grid(row=4, column=0, padx=20, pady=10, sticky="ew")
 
         # System VPN Routing Frame
-        self.system_vpn_frame = ctk.CTkFrame(self.vpn_control_frame, fg_color="transparent")
+        self.system_vpn_frame = ctk.CTkFrame(
+            self.vpn_control_frame, fg_color="transparent"
+        )
         self.system_vpn_frame.grid(row=5, column=0, padx=20, pady=(15, 10), sticky="ew")
         self.system_vpn_frame.grid_columnconfigure(0, weight=1)
         self.system_vpn_frame.grid_columnconfigure(1, weight=1)
@@ -1011,6 +1042,12 @@ class ProxyGUI(ctk.CTk):
                 logger.info("[GUI] Cleaning up VPN tunnels on close...")
                 self.vpn_manager.disable_system_routing()
                 self.vpn_manager.uninstall_all_services()
+                # Update config
+                from proxy_core.config import load_rotation_config, save_rotation_config
+
+                config = load_rotation_config()
+                config["system_vpn_active"] = False
+                save_rotation_config(config)
             except Exception as e:
                 logger.error(f"[GUI] Error during VPN cleanup on close: {e}")
         self.destroy()
@@ -1031,7 +1068,9 @@ class ProxyGUI(ctk.CTk):
                     )
                     with urllib.request.urlopen(req, timeout=8.0) as response:
                         raw_data = response.read().decode("utf-8")
-                        logger.info(f"[GUI] OpenRouter models response:\n{beautify_json_string(raw_data)}")
+                        logger.info(
+                            f"[GUI] OpenRouter models response:\n{beautify_json_string(raw_data)}"
+                        )
                         data = json.loads(raw_data)
                         free_models = []
                         for m in data.get("data", []):
@@ -1074,7 +1113,9 @@ class ProxyGUI(ctk.CTk):
                     req = urllib.request.Request(url, headers=headers)
                     with urllib.request.urlopen(req, timeout=8.0) as response:
                         raw_data = response.read().decode("utf-8")
-                        logger.info(f"[GUI] Ollama models response:\n{beautify_json_string(raw_data)}")
+                        logger.info(
+                            f"[GUI] Ollama models response:\n{beautify_json_string(raw_data)}"
+                        )
                         data = json.loads(raw_data)
                         models = []
                         for m in data.get("data", []):
@@ -1109,7 +1150,9 @@ class ProxyGUI(ctk.CTk):
                     req = urllib.request.Request(url, headers=headers)
                     with urllib.request.urlopen(req, timeout=8.0) as response:
                         raw_data = response.read().decode("utf-8")
-                        logger.info(f"[GUI] LLM7 models response:\n{beautify_json_string(raw_data)}")
+                        logger.info(
+                            f"[GUI] LLM7 models response:\n{beautify_json_string(raw_data)}"
+                        )
                         data = json.loads(raw_data)
                         models = []
                         # Since LLM7 returns a list directly
@@ -1150,7 +1193,9 @@ class ProxyGUI(ctk.CTk):
                     req = urllib.request.Request(url, headers=headers)
                     with urllib.request.urlopen(req, timeout=8.0) as response:
                         raw_data = response.read().decode("utf-8")
-                        logger.info(f"[GUI] Mistral models response:\n{beautify_json_string(raw_data)}")
+                        logger.info(
+                            f"[GUI] Mistral models response:\n{beautify_json_string(raw_data)}"
+                        )
                         data = json.loads(raw_data)
                         models = []
                         for m in data.get("data", []):
@@ -1185,7 +1230,9 @@ class ProxyGUI(ctk.CTk):
                     req = urllib.request.Request(url, headers=headers)
                     with urllib.request.urlopen(req, timeout=8.0) as response:
                         raw_data = response.read().decode("utf-8")
-                        logger.info(f"[GUI] OpenCode Zen models response:\n{beautify_json_string(raw_data)}")
+                        logger.info(
+                            f"[GUI] OpenCode Zen models response:\n{beautify_json_string(raw_data)}"
+                        )
                         data = json.loads(raw_data)
                         models = []
                         for m in data.get("data", []):
@@ -1773,7 +1820,9 @@ class ProxyGUI(ctk.CTk):
             log_queue.put("[GUI] [ERROR] VPN Manager library is not loaded.")
             return
         if not self.vpn_manager.is_admin():
-            log_queue.put("[GUI] [WARNING] Admin privileges required to restart tunnels.")
+            log_queue.put(
+                "[GUI] [WARNING] Admin privileges required to restart tunnels."
+            )
             return
 
         log_queue.put(
@@ -1789,6 +1838,7 @@ class ProxyGUI(ctk.CTk):
         def run_restart():
             try:
                 from proxy_core.rotation import restart_vpn_service
+
                 success = restart_vpn_service(idx)
                 if not success:
                     for attempt in range(1, 4):
@@ -1813,6 +1863,7 @@ class ProxyGUI(ctk.CTk):
                 self.after(0, self.do_poll_vpn_status)
 
         import threading
+
         threading.Thread(target=run_restart, daemon=True).start()
 
     def on_vpn_start_tunnels(self):
@@ -1893,7 +1944,9 @@ class ProxyGUI(ctk.CTk):
                                     stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL,
                                 )
-                                success = wait_for_adapter_and_add_route(i, timeout=60.0)
+                                success = wait_for_adapter_and_add_route(
+                                    i, timeout=60.0
+                                )
                                 if success:
                                     break
                         if success:
@@ -1926,8 +1979,12 @@ class ProxyGUI(ctk.CTk):
             finally:
                 self.after(
                     0,
-                    lambda: hasattr(self, "vpn_start_btn") and self.vpn_start_btn and self.vpn_start_btn.configure(
-                        state="normal", text="Start Tunnels"
+                    lambda: (
+                        hasattr(self, "vpn_start_btn")
+                        and self.vpn_start_btn
+                        and self.vpn_start_btn.configure(
+                            state="normal", text="Start Tunnels"
+                        )
                     ),
                 )
                 self.after(0, self.do_poll_vpn_status)
@@ -2030,7 +2087,9 @@ class ProxyGUI(ctk.CTk):
                 self.vpn_manager.disable_system_routing(print_cb=log_queue.put)
                 if hasattr(self, "system_vpn_switch") and self.system_vpn_switch:
                     self.after(0, lambda: self.system_vpn_switch.deselect())
-                    self.after(0, lambda: self.system_vpn_dropdown.configure(state="normal"))
+                    self.after(
+                        0, lambda: self.system_vpn_dropdown.configure(state="normal")
+                    )
                 self.system_vpn_active = False
                 log_queue.put(
                     "[GUI] [SUCCESS] All WireGuard tunnels removed. System routing restored to default."
@@ -2310,6 +2369,17 @@ class ProxyGUI(ctk.CTk):
                         results[channel] = {"status": "off", "latency": None}
                         return
 
+                    # If system VPN is active, only ping the selected channel and skip others
+                    if getattr(self, "system_vpn_active", False):
+                        try:
+                            selected_val = self.system_vpn_dropdown.get()
+                            sys_vpn_idx = int(selected_val.split()[-1])
+                        except Exception:
+                            sys_vpn_idx = 1
+                        if channel != sys_vpn_idx:
+                            results[channel] = {"status": "running", "latency": None}
+                            return
+
                     local_ip = f"10.8.0.1{channel}"
                     url = "https://api.ipify.org"
                     try:
@@ -2337,7 +2407,10 @@ class ProxyGUI(ctk.CTk):
 
                 # Update UI on main thread
                 def update_ui():
-                    if not hasattr(self, "channel_indicators") or not self.channel_indicators:
+                    if (
+                        not hasattr(self, "channel_indicators")
+                        or not self.channel_indicators
+                    ):
                         return
                     for i in range(1, 7):
                         data = results.get(i, {"status": "off", "latency": None})
@@ -2365,7 +2438,10 @@ class ProxyGUI(ctk.CTk):
                             self.sidebar_vpn_lamps[i].configure(
                                 text="●", text_color="#2ECC71"
                             )
-                            CTkToolTip(self.sidebar_vpn_lamps[i], f"VPN {i}: {data['latency']}ms")
+                            CTkToolTip(
+                                self.sidebar_vpn_lamps[i],
+                                f"VPN {i}: {data['latency']}ms",
+                            )
 
                 self.after(0, update_ui)
             except Exception as e:
@@ -2382,7 +2458,9 @@ class ProxyGUI(ctk.CTk):
 
         # Check admin privileges
         if not self.vpn_manager.is_admin():
-            log_queue.put("[GUI] [SYSTEM] WireGuard requires Administrator privileges. Requesting UAC elevation...")
+            log_queue.put(
+                "[GUI] [SYSTEM] WireGuard requires Administrator privileges. Requesting UAC elevation..."
+            )
             self.system_vpn_switch.deselect()
             self.vpn_manager.elevate()
             return
@@ -2397,47 +2475,86 @@ class ProxyGUI(ctk.CTk):
                     selected_val = self.system_vpn_dropdown.get()
                     # Parse index (e.g. "VPN 3" -> 3)
                     idx = int(selected_val.split()[-1])
-                    log_queue.put(f"[GUI] [SYSTEM] Enabling System VPN routing via VPN {idx}...")
-                    
+                    log_queue.put(
+                        f"[GUI] [SYSTEM] Enabling System VPN routing via VPN {idx}..."
+                    )
+
                     # Ensure service is running
                     from proxy_core.rotation import wait_for_adapter_and_add_route
-                    
+
                     # Check if service is active
                     output, _ = self.vpn_manager.run_ps_cmd(
                         f'Get-Service -Name "WireGuardTunnel$vpn{idx}" | Where-Object {{$_.Status -eq "Running"}}'
                     )
                     if not output:
-                        log_queue.put(f"[GUI] [SYSTEM] Service vpn{idx} is offline. Starting service...")
-                        conf_path = os.path.join(self.vpn_manager.configs_dir, f"vpn{idx}.conf")
+                        log_queue.put(
+                            f"[GUI] [SYSTEM] Service vpn{idx} is offline. Starting service..."
+                        )
+                        conf_path = os.path.join(
+                            self.vpn_manager.configs_dir, f"vpn{idx}.conf"
+                        )
                         if os.path.exists(conf_path):
                             subprocess.run(
-                                [self.vpn_manager.wg_path, "/installtunnelservice", conf_path],
+                                [
+                                    self.vpn_manager.wg_path,
+                                    "/installtunnelservice",
+                                    conf_path,
+                                ],
                                 stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL,
                             )
                             # Set startup to Manual
                             subprocess.run(
-                                ["powershell", "-Command", f"Set-Service -Name 'WireGuardTunnel$vpn{idx}' -StartupType Manual"],
+                                [
+                                    "powershell",
+                                    "-Command",
+                                    f"Set-Service -Name 'WireGuardTunnel$vpn{idx}' -StartupType Manual",
+                                ],
                                 stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL,
                             )
                             success = wait_for_adapter_and_add_route(idx, timeout=60.0)
                             if not success:
-                                log_queue.put(f"[GUI] [ERROR] Failed to start VPN {idx} service or configure adapter.")
+                                log_queue.put(
+                                    f"[GUI] [ERROR] Failed to start VPN {idx} service or configure adapter."
+                                )
                                 self.after(0, lambda: self.system_vpn_switch.deselect())
                                 return
                         else:
-                            log_queue.put(f"[GUI] [ERROR] Config not found for vpn{idx}")
+                            log_queue.put(
+                                f"[GUI] [ERROR] Config not found for vpn{idx}"
+                            )
                             self.after(0, lambda: self.system_vpn_switch.deselect())
                             return
 
                     # Enable system-wide routing
-                    self.vpn_manager.enable_system_routing_via(idx, print_cb=log_queue.put)
+                    self.vpn_manager.enable_system_routing_via(
+                        idx, print_cb=log_queue.put
+                    )
                     self.system_vpn_active = True
+                    # Update config
+                    from proxy_core.config import (
+                        load_rotation_config,
+                        save_rotation_config,
+                    )
+
+                    config = load_rotation_config()
+                    config["system_vpn_active"] = True
+                    config["system_vpn_index"] = idx
+                    save_rotation_config(config)
                 else:
                     log_queue.put("[GUI] [SYSTEM] Disabling System VPN routing...")
                     self.vpn_manager.disable_system_routing(print_cb=log_queue.put)
                     self.system_vpn_active = False
+                    # Update config
+                    from proxy_core.config import (
+                        load_rotation_config,
+                        save_rotation_config,
+                    )
+
+                    config = load_rotation_config()
+                    config["system_vpn_active"] = False
+                    save_rotation_config(config)
             except Exception as e:
                 logger.error(f"[GUI] Error toggling system VPN: {e}")
                 log_queue.put(f"[GUI] [ERROR] Failed to toggle system VPN: {e}")
@@ -2446,9 +2563,12 @@ class ProxyGUI(ctk.CTk):
             finally:
                 self.after(0, lambda: self.system_vpn_switch.configure(state="normal"))
                 if not self.system_vpn_active:
-                    self.after(0, lambda: self.system_vpn_dropdown.configure(state="normal"))
+                    self.after(
+                        0, lambda: self.system_vpn_dropdown.configure(state="normal")
+                    )
 
         import threading
+
         threading.Thread(target=run_toggle, daemon=True).start()
 
     def load_vpn_ui_settings(self):

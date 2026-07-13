@@ -101,6 +101,7 @@ def format_error_message(resp_text: str) -> str:
         return " ".join(resp_text.splitlines())
     try:
         import json
+
         data = json.loads(resp_text)
         if "error" in data:
             err = data["error"]
@@ -186,10 +187,26 @@ async def vpn_heartbeat_loop(app):
         global VPN_ANY_TUNNEL_ACTIVE
         VPN_ANY_TUNNEL_ACTIVE = len(running_services) > 0
 
+        # Check if system vpn is active from config
+        try:
+            from proxy_core.config import load_rotation_config
+
+            cfg = load_rotation_config()
+            system_vpn_active = cfg.get("system_vpn_active", False)
+            system_vpn_index = cfg.get("system_vpn_index", 1)
+        except Exception:
+            system_vpn_active = False
+            system_vpn_index = 1
+
         for i in range(1, 7):
             # Skip if service is not running
             if i not in running_services:
                 # Reset failures if service is stopped/not installed
+                VPN_CONSECUTIVE_FAILURES[i] = 0
+                continue
+
+            # If system VPN is active, skip checks for all other tunnels to prevent false-offline status
+            if system_vpn_active and i != system_vpn_index:
                 VPN_CONSECUTIVE_FAILURES[i] = 0
                 continue
 
@@ -725,14 +742,18 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
                 "latency_ms": latency_ms,
             }
         elif status_code == 429:
-            logger.error(f"[Test Model] [vpn#{actual_vpn_index}] Rate limit exceeded (429): {formatted_error}")
+            logger.error(
+                f"[Test Model] [vpn#{actual_vpn_index}] Rate limit exceeded (429): {formatted_error}"
+            )
             return {
                 "status": "rate_limited",
                 "message": f"Rate limit exceeded (429): {formatted_error}",
                 "latency_ms": latency_ms,
             }
         elif status_code == 404:
-            logger.error(f"[Test Model] [vpn#{actual_vpn_index}] Model not found (404): {formatted_error}")
+            logger.error(
+                f"[Test Model] [vpn#{actual_vpn_index}] Model not found (404): {formatted_error}"
+            )
             return {
                 "status": "not_found",
                 "message": f"Model not found (404): {formatted_error}",
@@ -1475,6 +1496,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
                     async def stream_generator():
                         try:
+
                             async def iter_bytes():
                                 try:
                                     async for chunk in response.aiter_bytes():
@@ -1767,6 +1789,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
                         if consecutive_503s >= 3:
                             import random
+
                             sleep_duration = random.uniform(15.0, 90.0)
                             logger.info(
                                 f"[{provider_name}] [vpn#{actual_vpn_index}] 3+ consecutive 503s. Sleeping {sleep_duration:.1f}s before trying next key..."
