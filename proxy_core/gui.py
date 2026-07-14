@@ -2520,6 +2520,10 @@ class ProxyGUI(ctk.CTk):
                                 )
                                 self.after(0, lambda: self.system_vpn_switch.deselect())
                                 return
+                            # Let the adapter stabilize in the kernel to prevent race conditions and BSODs
+                            import time
+
+                            time.sleep(2.0)
                         else:
                             log_queue.put(
                                 f"[GUI] [ERROR] Config not found for vpn{idx}"
