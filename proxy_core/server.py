@@ -562,6 +562,17 @@ def get_active_vpn_client(
 ) -> httpx.AsyncClient:
     """Resolve the appropriate AsyncClient based on the current VPN switching configuration."""
     vpn_clients = request.app.state.vpn_clients
+    
+    # If system VPN is active, force using the unbound client (vpn_clients[0])
+    # to prevent cross-interface routing and kernel/driver BSOD panic
+    try:
+        from proxy_core.config import load_rotation_config
+        cfg = load_rotation_config()
+        if cfg.get("system_vpn_active", False):
+            return vpn_clients[0]
+    except Exception:
+        pass
+
     if vpn_mode == "disabled":
         if 0 < vpn_static_channel <= 6:
             return vpn_clients.get(vpn_static_channel, vpn_clients[0])
