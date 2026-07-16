@@ -242,7 +242,18 @@ async def vpn_heartbeat_loop(app):
                     if if_index:
                         await asyncio.to_thread(
                             subprocess.run,
-                            ["route", "ADD", "0.0.0.0", "MASK", "0.0.0.0", "10.8.0.1", "METRIC", "50", "IF", if_index],
+                            [
+                                "route",
+                                "ADD",
+                                "0.0.0.0",
+                                "MASK",
+                                "0.0.0.0",
+                                "10.8.0.1",
+                                "METRIC",
+                                "50",
+                                "IF",
+                                if_index,
+                            ],
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,
                         )
@@ -680,6 +691,9 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
     elif provider_name == "opencode_zen":
         base_url = "https://opencode.ai/zen/v1"
         keys_pool = OPENCODE_KEYS
+    elif provider_name == "google":
+        base_url = "https://generativelanguage.googleapis.com/v1beta"
+        keys_pool = API_KEYS
     else:
         base_url = "https://generativelanguage.googleapis.com"
         keys_pool = API_KEYS
@@ -961,6 +975,12 @@ async def _transparent_proxy_attempt(request: Request, path: str):
         keys_pool = OPENCODE_KEYS
         provider_name = "opencode_zen"
         explicit_provider = "opencode_zen"
+    elif path.startswith("google/"):
+        target_base = TARGET_BASE_URL
+        current_path = path[7:]
+        keys_pool = API_KEYS
+        provider_name = "gemini"
+        explicit_provider = "google"
     else:
         target_base = TARGET_BASE_URL
         current_path = path
@@ -1122,6 +1142,17 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 logger.info(
                     f"Dynamically registered OpenCode Zen settings for model '{candidate_model}' with target model '{target_model}'"
                 )
+            elif candidate_model.startswith("google/"):
+                target_model = candidate_model[7:]
+                MODEL_SETTINGS[candidate_model] = {
+                    "provider": "gemini",
+                    "base_url": "https://generativelanguage.googleapis.com",
+                    "keys_pool": API_KEYS,
+                    "target_model": target_model,
+                }
+                logger.info(
+                    f"Dynamically registered Google settings for model '{candidate_model}' with target model '{target_model}'"
+                )
             elif candidate_model.startswith("ollama/") or candidate_model.startswith(
                 "ollama_cloud/"
             ):
@@ -1229,6 +1260,15 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 "keys_pool": OPENCODE_KEYS,
                 "target_model": candidate_model,
             }
+        elif explicit_provider == "google":
+            model_settings = {
+                "provider": "gemini",
+                "base_url": "https://generativelanguage.googleapis.com",
+                "keys_pool": API_KEYS,
+                "target_model": candidate_model[7:]
+                if candidate_model.startswith("google/")
+                else candidate_model,
+            }
         else:
             model_settings = MODEL_SETTINGS[candidate_model]
 
@@ -1254,6 +1294,8 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
         if provider_name == "gemini":
             target_path = path
+            if target_path.startswith("google/"):
+                target_path = target_path[7:]
             if "gemini-3.5-flash" in path and candidate_model != "gemini-3.5-flash":
                 target_path = path.replace("gemini-3.5-flash", target_model_id)
             elif (

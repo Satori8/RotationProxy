@@ -544,7 +544,7 @@ class ProxyGUI(ctk.CTk):
         self.provider_var = ctk.StringVar(value="OpenRouter")
         self.provider_dropdown = ctk.CTkOptionMenu(
             self.left_manager_frame,
-            values=["OpenRouter", "Ollama", "LLM7", "Mistral", "OpenCode Zen"],
+            values=["OpenRouter", "Ollama", "LLM7", "Mistral", "OpenCode Zen", "Google"],
             variable=self.provider_var,
             command=self.on_provider_change,
         )
@@ -1289,6 +1289,46 @@ class ProxyGUI(ctk.CTk):
                         self.after(0, lambda: self.render_free_models(models))
                 except Exception as e:
                     logger.error(f"[GUI] Failed to fetch OpenCode Zen models: {e}")
+                    self.after(
+                        0,
+                        lambda: self.fetch_btn.configure(
+                            state="normal", text="Fetch Models"
+                        ),
+                    )
+
+            elif provider == "Google":
+                url = "https://generativelanguage.googleapis.com/v1beta/models"
+                try:
+                    from proxy_core.rotation import API_KEYS
+
+                    headers = {"User-Agent": "Mozilla/5.0"}
+                    if API_KEYS:
+                        headers["x-goog-api-key"] = API_KEYS[0]
+                    req = urllib.request.Request(url, headers=headers)
+                    with urllib.request.urlopen(req, timeout=8.0) as response:
+                        raw_data = response.read().decode("utf-8")
+                        logger.info(
+                            f"[GUI] Google models response:\n{beautify_json_string(raw_data)}"
+                        )
+                        data = json.loads(raw_data)
+                        models = []
+                        for m in data.get("models", []):
+                            model_id = m.get("name", "")
+                            if model_id.startswith("models/"):
+                                model_id = model_id[7:]
+                            models.append(
+                                {
+                                    "id": model_id,
+                                    "name": m.get("displayName", model_id),
+                                    "context_length": m.get("inputTokenLimit", "unknown"),
+                                    "provider": "google",
+                                }
+                            )
+                        # Sort by id
+                        models = sorted(models, key=lambda x: x["id"])
+                        self.after(0, lambda: self.render_free_models(models))
+                except Exception as e:
+                    logger.error(f"[GUI] Failed to fetch Google models: {e}")
                     self.after(
                         0,
                         lambda: self.fetch_btn.configure(
