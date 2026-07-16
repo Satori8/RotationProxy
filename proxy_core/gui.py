@@ -491,6 +491,39 @@ class ProxyGUI(ctk.CTk):
             "debug", foreground="#7F8C8D"
         )  # Asbestos grey
 
+        self.autoscroll = True
+
+        def custom_yscroll(*args):
+            if args:
+                try:
+                    first, last = float(args[0]), float(args[1])
+                    if last >= 0.99:
+                        self.autoscroll = True
+                    else:
+                        self.autoscroll = False
+                except Exception:
+                    pass
+            try:
+                self.log_textbox._scrollbar.set(*args)
+            except Exception:
+                pass
+
+        self.log_textbox._textbox.configure(yscrollcommand=custom_yscroll)
+
+        def custom_key_binding(event):
+            ctrl = (event.state & 0x4) != 0
+            if ctrl:
+                key = event.keysym.lower()
+                if key in ("c", "cyrillic_es") or event.keycode == 67:
+                    self.log_textbox._textbox.event_generate("<<Copy>>")
+                    return "break"
+                elif key in ("a", "cyrillic_fef") or event.keycode == 65:
+                    self.log_textbox._textbox.tag_add("sel", "1.0", "end")
+                    return "break"
+            return None
+
+        self.log_textbox._textbox.bind("<Control-KeyPress>", custom_key_binding)
+
         self.clear_btn = ctk.CTkButton(
             self.tab_logs, text="Clear Logs", command=self.on_clear_logs, width=120
         )
@@ -908,7 +941,8 @@ class ProxyGUI(ctk.CTk):
                         tag = "info"
 
                 self.log_textbox._textbox.insert("end", msg + "\n", tag)
-                self.log_textbox._textbox.see("end")
+                if self.autoscroll:
+                    self.log_textbox._textbox.see("end")
             except Exception:
                 break
         self.after(300, self.poll_queue)
