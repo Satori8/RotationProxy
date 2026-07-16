@@ -154,6 +154,21 @@ def remove_key_from_error_log(model: str, key: str) -> None:
         )
 
 
+def get_interface_index(interface_alias: str) -> str:
+    """Resolve interface index for a given alias safely using PowerShell (read-only)."""
+    import subprocess
+    try:
+        cmd = f'Get-NetIPInterface -InterfaceAlias "{interface_alias}" -AddressFamily IPv4 | Select-Object -ExpandProperty InterfaceIndex'
+        result = subprocess.run(
+            ["powershell", "-Command", cmd],
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
+    except Exception:
+        return ""
+
+
 def wait_for_adapter_and_add_route(vpn_index: int, timeout: float = 60.0) -> bool:
     """Polls every 0.5s until the VPN adapter's IP appears, then adds the default route."""
     import time
@@ -162,6 +177,13 @@ def wait_for_adapter_and_add_route(vpn_index: int, timeout: float = 60.0) -> boo
     ip_address = f"10.8.0.1{vpn_index}"
     interface_alias = f"vpn{vpn_index}"
     start_time = time.time()
+
+    # Check if system VPN is active from config to skip route addition if needed
+    try:
+        cfg = load_rotation_config()
+        system_vpn_active = cfg.get("system_vpn_active", False)
+    except Exception:
+        system_vpn_active = False
 
     while time.time() - start_time < timeout:
         # Check if IP is present
@@ -173,16 +195,27 @@ def wait_for_adapter_and_add_route(vpn_index: int, timeout: float = 60.0) -> boo
         )
         stdout = result.stdout.decode("utf-8", errors="replace")
         if stdout and ip_address in stdout:
-            # IP found! Add default route
-            route_cmd = f'New-NetRoute -InterfaceAlias "{interface_alias}" -DestinationPrefix "0.0.0.0/0" -NextHop "10.8.0.1" -RouteMetric 50 -Confirm:$false -ErrorAction SilentlyContinue'
-            subprocess.run(
-                ["powershell", "-Command", route_cmd],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            logger.info(
-                f"[VPN {vpn_index}] Adapter detected and default route configured successfully."
-            )
+            # IP found! Add default route only if system VPN is not active
+            if not system_vpn_active:
+                if_index = get_interface_index(interface_alias)
+                if if_index:
+                    route_cmd = ["route", "ADD", "0.0.0.0", "MASK", "0.0.0.0", "10.8.0.1", "METRIC", "50", "IF", if_index]
+                    subprocess.run(
+                        route_cmd,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    logger.info(
+                        f"[VPN {vpn_index}] Adapter detected and default route configured successfully via route.exe."
+                    )
+                else:
+                    logger.warning(
+                        f"[VPN {vpn_index}] Adapter detected but failed to resolve interface index."
+                    )
+            else:
+                logger.info(
+                    f"[VPN {vpn_index}] Adapter detected. Skipping default route addition because System VPN is active."
+                )
             return True
         time.sleep(0.5)
 

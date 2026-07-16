@@ -45,6 +45,7 @@ from proxy_core.rotation import (
     remove_key_from_error_log,
     wait_for_adapter_and_add_route,
     restart_vpn_service,
+    get_interface_index,
 )
 from proxy_core.state import log_queue as global_log_queue
 from proxy_core.helpers import (
@@ -235,14 +236,16 @@ async def vpn_heartbeat_loop(app):
                     f"[Heartbeat] VPN {i} check failed: {e} (Consecutive: {VPN_CONSECUTIVE_FAILURES[i]})"
                 )
 
-                # Step 1: Immediate Route Addition
-                route_cmd = f'New-NetRoute -InterfaceAlias "vpn{i}" -DestinationPrefix "0.0.0.0/0" -NextHop "10.8.0.1" -RouteMetric 50 -Confirm:$false -ErrorAction SilentlyContinue'
-                await asyncio.to_thread(
-                    subprocess.run,
-                    ["powershell", "-Command", route_cmd],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+                # Step 1: Immediate Route Addition (only if system VPN is not active)
+                if not system_vpn_active:
+                    if_index = await asyncio.to_thread(get_interface_index, f"vpn{i}")
+                    if if_index:
+                        await asyncio.to_thread(
+                            subprocess.run,
+                            ["route", "ADD", "0.0.0.0", "MASK", "0.0.0.0", "10.8.0.1", "METRIC", "50", "IF", if_index],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
 
                 # Step 2: Service Restart & Cooldown
                 if VPN_CONSECUTIVE_FAILURES[i] >= 5:
