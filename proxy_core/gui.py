@@ -701,6 +701,24 @@ class ProxyGUI(ctk.CTk):
 
         self.system_vpn_active = False
 
+        self.vpn_check_ips_btn = ctk.CTkButton(
+            self.vpn_control_frame,
+            text="Check Tunnels IP",
+            fg_color="#8E44AD",
+            hover_color="#9B59B6",
+            command=self.on_vpn_check_ips,
+        )
+        self.vpn_check_ips_btn.grid(row=6, column=0, padx=20, pady=10, sticky="ew")
+
+        self.vpn_reset_defaults_btn = ctk.CTkButton(
+            self.vpn_control_frame,
+            text="Reset to Defaults",
+            fg_color="#D35400",
+            hover_color="#E67E22",
+            command=self.on_vpn_reset_defaults,
+        )
+        self.vpn_reset_defaults_btn.grid(row=7, column=0, padx=20, pady=10, sticky="ew")
+
         # Right subframe: VPN Rotation Settings
         self.vpn_config_frame = ctk.CTkFrame(self.tab_vpn, corner_radius=8)
         self.vpn_config_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
@@ -2061,6 +2079,110 @@ class ProxyGUI(ctk.CTk):
                 )
 
         threading.Thread(target=run_manual_forward, daemon=True).start()
+
+    def on_vpn_check_ips(self):
+        """Check and display the external IP of every active tunnel in a background thread."""
+        if not hasattr(self, "vpn_manager") or self.vpn_manager is None:
+            log_queue.put("[GUI] [ERROR] VPN Manager library is not loaded.")
+            return
+
+        if hasattr(self, "vpn_check_ips_btn") and self.vpn_check_ips_btn:
+            self.vpn_check_ips_btn.configure(state="disabled", text="Checking IPs...")
+
+        log_queue.put("[GUI] [SYSTEM] Checking external IPs of all VPN tunnels...")
+
+        def run_check():
+            import httpx
+            import threading
+
+            results = {}
+            threads = []
+
+            def check_ip(idx):
+                try:
+                    transport = httpx.HTTPTransport(local_address=f"10.8.0.1{idx}")
+                    with httpx.Client(transport=transport, timeout=5.0) as client:
+                        resp = client.get("https://api.ipify.org?format=json")
+                        if resp.status_code == 200:
+                            results[idx] = resp.json().get("ip", "Unknown")
+                        else:
+                            results[idx] = f"HTTP {resp.status_code}"
+                except Exception:
+                    results[idx] = "Offline/Unreachable"
+
+            for i in range(1, 7):
+                t = threading.Thread(target=check_ip, args=(i,))
+                threads.append(t)
+                t.start()
+
+            for t in threads:
+                t.join()
+
+            log_queue.put("=" * 50)
+            log_queue.put("🌍 EXTERNAL IP STATUS FOR ALL TUNNELS:")
+            log_queue.put("=" * 50)
+            for i in sorted(results.keys()):
+                log_queue.put(f"  -> VPN {i} (10.8.0.1{i}): {results[i]}")
+            log_queue.put("=" * 50)
+
+            if hasattr(self, "vpn_check_ips_btn") and self.vpn_check_ips_btn:
+                self.after(0, lambda: self.vpn_check_ips_btn.configure(state="normal", text="Check Tunnels IP"))
+
+        import threading
+        threading.Thread(target=run_check, daemon=True).start()
+
+    def on_vpn_reset_defaults(self):
+        """Uninstall all tunnels, clear all custom routes, turn off System VPN, and restore default Windows routing."""
+        if not hasattr(self, "vpn_manager") or self.vpn_manager is None:
+            log_queue.put("[GUI] [ERROR] VPN Manager library is not loaded.")
+            return
+
+        if not self.vpn_manager.is_admin():
+            self.vpn_manager.elevate()
+            return
+
+        import tkinter.messagebox as messagebox
+        if not messagebox.askyesno(
+            "Reset to Defaults",
+            "This will completely stop and uninstall all 6 VPN tunnels, clear all custom system routes, and restore your default Windows routing table.\n\nAre you sure you want to proceed?"
+        ):
+            return
+
+        if hasattr(self, "vpn_reset_defaults_btn") and self.vpn_reset_defaults_btn:
+            self.vpn_reset_defaults_btn.configure(state="disabled", text="Resetting...")
+
+        log_queue.put("[GUI] [SYSTEM] Reverting all VPN and routing changes to system defaults...")
+
+        def run_reset():
+            try:
+                # 1. Turn off System VPN toggle in GUI and config
+                self.after(0, lambda: self.system_vpn_switch.deselect())
+                self.system_vpn_active = False
+
+                try:
+                    from proxy_core.config import load_rotation_config, save_rotation_config
+                    cfg = load_rotation_config()
+                    cfg["system_vpn_active"] = False
+                    save_rotation_config(cfg)
+                except Exception as ce:
+                    logger.error(f"[GUI] Failed to update config on reset: {ce}")
+
+                # 2. Clear system routing
+                self.vpn_manager.disable_system_routing(print_cb=log_queue.put)
+
+                # 3. Uninstall all 6 tunnels
+                self.vpn_manager.uninstall_all_services(print_cb=log_queue.put)
+
+                log_queue.put("[GUI] [SYSTEM] System routing and tunnel configurations successfully reset to defaults!")
+            except Exception as e:
+                logger.error(f"[GUI] Error resetting to defaults: {e}")
+                log_queue.put(f"[GUI] [ERROR] Reset failed: {e}")
+            finally:
+                if hasattr(self, "vpn_reset_defaults_btn") and self.vpn_reset_defaults_btn:
+                    self.after(0, lambda: self.vpn_reset_defaults_btn.configure(state="normal", text="Reset to Defaults"))
+
+        import threading
+        threading.Thread(target=run_reset, daemon=True).start()
 
     def on_vpn_stop_tunnels(self):
         """Stop and cleanly uninstall all 6 WireGuard tunnels in a background thread."""
