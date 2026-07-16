@@ -71,9 +71,9 @@ def seconds_until_rpd_reset() -> float:
 def log_non_429_error(model: str, key: str, error_msg: str) -> None:
     ERROR_LOG_PATH = "error_keys_log.json"
     try:
-        # Only log 403 errors
+        # Only log 403 and 401 errors
         match = re.search(r"HTTP (\d{3})", error_msg)
-        if not match or match.group(1) != "403":
+        if not match or match.group(1) not in ("403", "401"):
             return
 
         error_code = match.group(1)

@@ -284,10 +284,14 @@ def test_extract_text_from_chunk():
 
     # Test 3: Non-streaming OpenAI chunk (message instead of delta)
     chunk_non_stream = '{"choices": [{"message": {"content": "Hello Non-Stream"}}]}'
-    assert extract_text_from_chunk(chunk_non_stream, "ollama_cloud") == "Hello Non-Stream"
+    assert (
+        extract_text_from_chunk(chunk_non_stream, "ollama_cloud") == "Hello Non-Stream"
+    )
 
     # Test 4: Gemini SSE chunk
-    chunk_gemini = 'data: {"candidates": [{"content": {"parts": [{"text": "Hello Gemini"}]}}]}'
+    chunk_gemini = (
+        'data: {"candidates": [{"content": {"parts": [{"text": "Hello Gemini"}]}}]}'
+    )
     assert extract_text_from_chunk(chunk_gemini, "gemini") == "Hello Gemini"
 
     print("  -> extract_text_from_chunk passed!")
@@ -296,6 +300,7 @@ def test_extract_text_from_chunk():
 def test_inspect_tree_sitter():
     print("Inspecting tree-sitter node attributes...")
     import tree_sitter_language_pack
+
     parser = tree_sitter_language_pack.get_parser("python")
     tree = parser.parse(b"def foo(): pass")
     node = tree.root_node
@@ -308,8 +313,10 @@ def test_inspect_tree_sitter():
 def test_inspect_native_tree_sitter():
     print("Inspecting native tree-sitter node attributes...")
     import tree_sitter_language_pack
+
     # Get the original unwrapped parser
     from proxy_core.compactor import _orig_get_parser
+
     parser = _orig_get_parser("python")
     tree = parser.parse(b"def foo(): pass")
     native_node = tree.root_node
@@ -322,10 +329,10 @@ def test_inspect_native_tree_sitter():
         print(f"[NATIVE INSPECT] node.kind value: {native_node.kind}")
 
 
-
 def test_find_builtins_node():
     print("Finding builtins.Node...")
     import builtins
+
     if hasattr(builtins, "Node"):
         print(f"[BUILTINS] Node exists: {builtins.Node}")
         print(f"[BUILTINS] Node dir: {dir(builtins.Node)}")
@@ -420,6 +427,64 @@ def test_403_error_logging_only_by_key():
 
         # The entry should be gone
         assert "key_X|403" not in log_data
+
+    finally:
+        # Restore backup
+        if os.path.exists(ERROR_LOG_PATH):
+            os.remove(ERROR_LOG_PATH)
+        if backup_exists and backup_content is not None:
+            with open(ERROR_LOG_PATH, "w", encoding="utf-8") as f:
+                f.write(backup_content)
+
+
+def test_401_error_logging_only_by_key():
+    from proxy_core.rotation import log_non_429_error, remove_key_from_error_log
+    import os
+    import json
+
+    ERROR_LOG_PATH = "error_keys_log.json"
+    # Backup existing log if it exists
+    backup_exists = os.path.exists(ERROR_LOG_PATH)
+    backup_content = None
+    if backup_exists:
+        with open(ERROR_LOG_PATH, "r", encoding="utf-8") as f:
+            backup_content = f.read()
+        os.remove(ERROR_LOG_PATH)
+
+    try:
+        # 1. Log 401 error for model A and key Y
+        log_non_429_error("model_A", "key_Y", "HTTP 401 Unauthorized: Invalid token")
+
+        # Verify it was logged
+        assert os.path.exists(ERROR_LOG_PATH)
+        with open(ERROR_LOG_PATH, "r", encoding="utf-8") as f:
+            log_data = json.load(f)
+
+        # The key in JSON should be "key_Y|401"
+        assert "key_Y|401" in log_data
+        assert log_data["key_Y|401"]["count"] == 1
+        assert log_data["key_Y|401"]["model"] == "model_A"
+
+        # 2. Log 401 error for model B and key Y (same key, different model)
+        log_non_429_error(
+            "model_B", "key_Y", "HTTP 401 Unauthorized: Expired credentials"
+        )
+
+        with open(ERROR_LOG_PATH, "r", encoding="utf-8") as f:
+            log_data = json.load(f)
+
+        # Count should increment to 2
+        assert "key_Y|401" in log_data
+        assert log_data["key_Y|401"]["count"] == 2
+
+        # 3. Remove key Y from error log (using any model, e.g. model_C)
+        remove_key_from_error_log("model_C", "key_Y")
+
+        with open(ERROR_LOG_PATH, "r", encoding="utf-8") as f:
+            log_data = json.load(f)
+
+        # The entry should be gone
+        assert "key_Y|401" not in log_data
 
     finally:
         # Restore backup

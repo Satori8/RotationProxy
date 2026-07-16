@@ -562,11 +562,12 @@ def get_active_vpn_client(
 ) -> httpx.AsyncClient:
     """Resolve the appropriate AsyncClient based on the current VPN switching configuration."""
     vpn_clients = request.app.state.vpn_clients
-    
+
     # If system VPN is active, force using the unbound client (vpn_clients[0])
     # to prevent cross-interface routing and kernel/driver BSOD panic
     try:
         from proxy_core.config import load_rotation_config
+
         cfg = load_rotation_config()
         if cfg.get("system_vpn_active", False):
             return vpn_clients[0]
@@ -1758,6 +1759,13 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         log_non_429_error(candidate_model, api_key, error_msg)
                         logger.error(
                             f"[{provider_name}] [vpn#{actual_vpn_index}] Key #{key_index} 403 ({candidate_model}) on {request.method} {target_url}. Error: {format_error_message(resp_text)}. Cooldown 12h [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
+                        )
+                        continue
+                    elif response.status_code == 401:
+                        error_msg = f"HTTP 401 Unauthorized: {resp_text}"
+                        log_non_429_error(candidate_model, api_key, error_msg)
+                        logger.warning(
+                            f"[{provider_name}] [vpn#{actual_vpn_index}] Key #{key_index} 401 ({candidate_model}) on {request.method} {target_url}. Error: {format_error_message(resp_text)} [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                         )
                         continue
                     elif response.status_code == 503:
