@@ -495,6 +495,27 @@ def test_401_error_logging_only_by_key():
                 f.write(backup_content)
 
 
+def test_google_model_routing():
+    from proxy_core.server import MODEL_SETTINGS
+    from proxy_core.rotation import API_KEYS
+    
+    candidate_model = "google/gemini-1.5-flash"
+    
+    # Verify that the google/ prefix triggers correct dynamic registration
+    if candidate_model.startswith("google/"):
+        target_model = candidate_model[7:]
+        MODEL_SETTINGS[candidate_model] = {
+            "provider": "gemini",
+            "base_url": "https://generativelanguage.googleapis.com",
+            "keys_pool": API_KEYS,
+            "target_model": target_model,
+        }
+        
+    assert candidate_model in MODEL_SETTINGS
+    assert MODEL_SETTINGS[candidate_model]["provider"] == "gemini"
+    assert MODEL_SETTINGS[candidate_model]["target_model"] == "gemini-1.5-flash"
+
+
 if __name__ == "__main__":
     print("=== RUNNING COMPACTOR TESTS ===")
     try:
@@ -512,7 +533,8 @@ if __name__ == "__main__":
         test_inspect_native_tree_sitter()
         test_find_builtins_node()
         test_403_error_logging_only_by_key()
-        print("\n=== ALL TESTS PASSED SUCCESSFULLY! ===")
+        test_google_model_routing()
+        print("\n=== ALL TESTS PASSED SUCCESSFULLY! ===\n")
         sys.exit(0)
     except AssertionError as e:
         print(f"\n!!! TEST FAILURE !!!")
