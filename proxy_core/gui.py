@@ -460,7 +460,6 @@ class ProxyGUI(ctk.CTk):
         self.tabview.add("Model Manager")
         self.tabview.add("VPN Manager")
         self.tabview.add("Settings")
-        self.tabview.add("Anomalies")
 
         # Tab 1: Console Logs
         self.tab_logs = self.tabview.tab("Console Logs")
@@ -625,17 +624,6 @@ class ProxyGUI(ctk.CTk):
         self.tab_settings = self.tabview.tab("Settings")
         self.tab_settings.grid_columnconfigure(0, weight=1)
         self.tab_settings.grid_rowconfigure(0, weight=1)
-
-        # Tab 5: Anomalies
-        self.anomalies_tab = self.tabview.tab("Anomalies")
-        self.anomalies_textbox = ctk.CTkTextbox(
-            self.anomalies_tab,
-            font=ctk.CTkFont(family="Consolas", size=11),
-            text_color="#E74C3C",
-        )
-        self.anomalies_textbox.pack(fill="both", expand=True, padx=10, pady=10)
-        self.anomalies_textbox.insert("1.0", "No anomalies detected yet.")
-        self.anomalies_textbox.configure(state="disabled")
 
         # Load settings UI
         self.load_settings_ui()
