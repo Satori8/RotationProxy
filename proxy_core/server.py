@@ -704,8 +704,29 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
             "message": f"No keys configured for provider '{provider_name}'.",
         }
 
-    # Pick the first available key
-    api_key = keys_pool[0]
+    # Resolve the correct bound client for the test request
+    rotation_config = load_rotation_config()
+    vpn_mode = rotation_config.get("vpn_switching_mode", "disabled")
+    vpn_static = int(rotation_config.get("vpn_static_channel", 0))
+
+    current_vpn_index = VPN_CURRENT_INDEX if VPN_ANY_TUNNEL_ACTIVE else 0
+    if vpn_mode == "disabled":
+        actual_vpn_index = vpn_static if 0 < vpn_static <= 6 else 0
+    else:
+        actual_vpn_index = current_vpn_index if VPN_ANY_TUNNEL_ACTIVE else 0
+    client = get_active_vpn_client(request, vpn_mode, vpn_static, current_vpn_index)
+
+    # Pick the key (use rotation logic for google/gemini to select the correct active key)
+    if provider_name in ("google", "gemini"):
+        now = time.time()
+        available_keys = [k for k in keys_pool if COOLDOWNS.get(k, 0.0) < now]
+        if not available_keys:
+            available_keys = keys_pool
+        available_keys = sorted(available_keys, key=lambda k: LAST_USED.get(k, 0.0))
+        key_idx = current_vpn_index % len(available_keys)
+        api_key = available_keys[key_idx]
+    else:
+        api_key = keys_pool[0]
     headers = {"Content-Type": "application/json"}
     if provider_name in (
         "openrouter",
@@ -727,18 +748,6 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
         test_body["stream"] = False
     else:
         url = f"{base_url}/chat/completions"
-
-    # Resolve the correct bound client for the test request
-    rotation_config = load_rotation_config()
-    vpn_mode = rotation_config.get("vpn_switching_mode", "disabled")
-    vpn_static = int(rotation_config.get("vpn_static_channel", 0))
-
-    current_vpn_index = VPN_CURRENT_INDEX if VPN_ANY_TUNNEL_ACTIVE else 0
-    if vpn_mode == "disabled":
-        actual_vpn_index = vpn_static if 0 < vpn_static <= 6 else 0
-    else:
-        actual_vpn_index = current_vpn_index if VPN_ANY_TUNNEL_ACTIVE else 0
-    client = get_active_vpn_client(request, vpn_mode, vpn_static, current_vpn_index)
 
     start_time = time.perf_counter()
     try:

@@ -1,5 +1,5 @@
 {
-  "last_fallback_switch_time": 1781793382.1645656,
+  "last_fallback_switch_time": 1784253391.7707057,
   "model_cooldowns": {},
   "consecutive_model_failures": {
     "gemini-3.5-flash": 0,
@@ -33,8 +33,8 @@
     "gemini-3.5-flash": "gemini-3.5-flash",
     "gemini-flash-lite-latest": "auto"
   },
-  "save_chat_logs": true,
-  "vpn_switching_mode": "error_threshold",
+  "save_chat_logs": false,
+  "vpn_switching_mode": "every_request",
   "vpn_static_channel": 0,
   "vpn_errors_threshold": 3,
   "key_cooldown_duration": 90.0,
@@ -54,5 +54,7 @@
   "compactor_block_generic_read": false,
   "compactor_move_reminders": true,
   "compactor_inject_guardrails": false,
-  "compactor_enable_headroom": false
+  "compactor_enable_headroom": false,
+  "system_vpn_active": false,
+  "system_vpn_index": 6
 }
