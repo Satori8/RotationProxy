@@ -19,7 +19,7 @@
 Replace `FORCE_PROVIDER` with `FORCE_MODEL`:
 ```python
 FORCE_MODEL = {
-    "gemini-3.5-flash": "auto",
+    "gemini-3.6-flash": "auto",
     "gemini-flash-lite-latest": "auto"
 }
 ```
@@ -177,7 +177,7 @@ class ProxyGUI(ctk.CTk):
         ctk.CTkLabel(self.left_panel, text="Thinking Domain Priority:", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=20)
         thinking_models = [
             "Auto (Rotation)",
-            "gemini-3.5-flash",
+            "gemini-3.6-flash",
             "deepseek/deepseek-r1:free",
             "qwen/qwen-2.5-72b-instruct:free",
             "meta-llama/llama-3.3-70b-instruct:free",
@@ -293,10 +293,10 @@ class ProxyGUI(ctk.CTk):
 ```python
     def on_thinking_select(self, val):
         if val == "Auto (Rotation)":
-            FORCE_MODEL["gemini-3.5-flash"] = "auto"
+            FORCE_MODEL["gemini-3.6-flash"] = "auto"
             logger.info("Thinking domain manual priority cleared (set to Auto).")
         else:
-            FORCE_MODEL["gemini-3.5-flash"] = val
+            FORCE_MODEL["gemini-3.6-flash"] = val
             logger.info(f"Thinking domain priority model set to: {val}")
             
     def on_quick_select(self, val):

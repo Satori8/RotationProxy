@@ -67,9 +67,9 @@ To keep the root folder clean, all modules are organized inside the `proxy_core`
 * Implements the core proxy endpoints, request payload translations, and response stream generator.
 * **Single-Line Completion Logs:** Outputs exactly one structured log line per completed request:
   `[TIMESTAMP] [LEVEL] [model] [key#suffix] [status_code]`
-  * *Example:* `[2026-05-30 16:35:48,358] [INFO] [gemini-3.5-flash] [key#3-abcd] [200]`
+  * *Example:* `[2026-05-30 16:35:48,358] [INFO] [gemini-3.6-flash] [key#3-abcd] [200]`
 * **Short Cooldown Logs:** All warning/sleep messages are compressed to minimize clutter:
-  * `[gemini] Key #3 429 (gemini-3.5-flash). Cooldown 90.0s. Attempt 1/5`
+  * `[gemini] Key #3 429 (gemini-3.6-flash). Cooldown 90.0s. Attempt 1/5`
   * `[gemini] Sleeping 1.50s...`
   * `[gemini] Key #3 RPD limit. Wait 12.3h`
 * **Control API:** Exposes a `POST /control/reset_cooldowns` endpoint to clear all runtime states in `state.py` and resets config list cooldowns in `config_rotation.json`.

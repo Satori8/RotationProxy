@@ -360,7 +360,7 @@ Add these order manipulation methods inside the `ProxyGUI` class in `proxy_core/
     def load_active_rotation_from_disk(self):
         """Load and display the active rotation list from config."""
         config = load_rotation_config()
-        self.active_rotation_list = config.get("rotation_lists", {}).get("gemini-3.5-flash", [])
+        self.active_rotation_list = config.get("rotation_lists", {}).get("gemini-3.6-flash", [])
         self.render_rotation_list()
 
     def render_rotation_list(self):
@@ -376,8 +376,8 @@ Add these order manipulation methods inside the `ProxyGUI` class in `proxy_core/
             lbl = ctk.CTkLabel(row_frame, text=model_id, font=ctk.CTkFont(size=10, weight="bold"))
             lbl.grid(row=0, column=0, padx=5, pady=2, sticky="w")
 
-            # Check core boundaries (don't allow removing gemini-3.5-flash)
-            if model_id != "gemini-3.5-flash":
+            # Check core boundaries (don't allow removing gemini-3.6-flash)
+            if model_id != "gemini-3.6-flash":
                 # Up button
                 up_cb = lambda i=idx: self.on_shift_model_priority(i, direction=-1)
                 btn_up = ctk.CTkButton(row_frame, text="▲", width=22, height=18, font=ctk.CTkFont(size=8), command=up_cb)
@@ -397,8 +397,8 @@ Add these order manipulation methods inside the `ProxyGUI` class in `proxy_core/
         """Shift model priority up (-1) or down (+1) in the rotation list."""
         new_index = index + direction
         if 0 <= new_index < len(self.active_rotation_list):
-            # Maintain gemini-3.5-flash boundary at index 0
-            if self.active_rotation_list[0] == "gemini-3.5-flash" and (index == 0 or new_index == 0):
+            # Maintain gemini-3.6-flash boundary at index 0
+            if self.active_rotation_list[0] == "gemini-3.6-flash" and (index == 0 or new_index == 0):
                 return
             
             # Swap items
@@ -408,7 +408,7 @@ Add these order manipulation methods inside the `ProxyGUI` class in `proxy_core/
 
     def on_remove_model_from_rotation(self, model_id):
         """Remove a model from the local in-memory rotation list."""
-        if model_id != "gemini-3.5-flash" and model_id in self.active_rotation_list:
+        if model_id != "gemini-3.6-flash" and model_id in self.active_rotation_list:
             self.active_rotation_list.remove(model_id)
             self.render_rotation_list()
 
@@ -425,7 +425,7 @@ Add these order manipulation methods inside the `ProxyGUI` class in `proxy_core/
             config = load_rotation_config()
             if "rotation_lists" not in config:
                 config["rotation_lists"] = {}
-            config["rotation_lists"]["gemini-3.5-flash"] = list(self.active_rotation_list)
+            config["rotation_lists"]["gemini-3.6-flash"] = list(self.active_rotation_list)
             save_rotation_config(config)
             logger.info("[GUI] Successfully saved active rotation configuration on disk!")
             log_queue.put("[GUI] Successfully saved active rotation configuration!")

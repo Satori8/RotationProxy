@@ -56,8 +56,8 @@ def get_requested_model(path: str, body: bytes) -> str:
         return "gemini-flash-lite-latest"
     if "gemini-3-flash-preview" in path:
         return "gemini-3-flash-preview"
-    if "gemini-3.5-flash" in path:
-        return "gemini-3.5-flash"
+    if "gemini-3.6-flash" in path:
+        return "gemini-3.6-flash"
 
     # 3. Try to extract from JSON body
     try:
@@ -66,7 +66,7 @@ def get_requested_model(path: str, body: bytes) -> str:
             return data["model"]
     except Exception:
         pass
-    return "gemini-3.5-flash"
+    return "gemini-3.6-flash"
 
 
 def extract_chat_messages(body: bytes) -> list:
@@ -279,9 +279,7 @@ async def write_chat_log(
                 f.write(resp_str.replace("\\n", "\n"))
 
         await asyncio.to_thread(do_write_session)
-        logger.info(
-            f"Saved session log to {session_dir} (N={idx})"
-        )
+        logger.info(f"Saved session log to {session_dir} (N={idx})")
     except Exception as e:
         logger.error(f"Failed to write chat log: {e}")
 

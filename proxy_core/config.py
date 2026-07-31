@@ -6,7 +6,7 @@ logger = logging.getLogger("proxy")
 
 ROTATION_CONFIG_PATH = "config_rotation.json"
 
-FORCE_MODEL = {"gemini-3.5-flash": "auto", "gemini-flash-lite-latest": "auto"}
+FORCE_MODEL = {"gemini-3.6-flash": "auto", "gemini-flash-lite-latest": "auto"}
 USE_KAGGLE = False
 SAVE_CHAT_LOGS = False
 KAGGLE_BASE_URL = "https://fine-cable-outside-escape.trycloudflare.com/v1"
@@ -52,7 +52,7 @@ def save_kaggle_url(new_url: str) -> bool:
 
 def load_rotation_config() -> dict:
     target_gemini_35_list = [
-        "gemini-3.5-flash",
+        "gemini-3.6-flash",
         "gemini-3-flash-preview",
         "openrouter/owl-alpha",
         "deepseek/deepseek-v4-flash:free",
@@ -85,11 +85,11 @@ def load_rotation_config() -> dict:
                 del config["rotation_lists"]["gemini-2.0-flash-lite"]
                 needs_upgrade = True
 
-            if "gemini-3.5-flash" not in config["rotation_lists"]:
-                config["rotation_lists"]["gemini-3.5-flash"] = target_gemini_35_list
+            if "gemini-3.6-flash" not in config["rotation_lists"]:
+                config["rotation_lists"]["gemini-3.6-flash"] = target_gemini_35_list
                 needs_upgrade = True
             else:
-                current_35_list = config["rotation_lists"]["gemini-3.5-flash"]
+                current_35_list = config["rotation_lists"]["gemini-3.6-flash"]
                 for model in target_gemini_35_list:
                     if model not in current_35_list:
                         current_35_list.append(model)
@@ -166,12 +166,12 @@ def load_rotation_config() -> dict:
         "model_cooldowns": {},
         "consecutive_model_failures": {},
         "rotation_lists": {
-            "gemini-3.5-flash": target_gemini_35_list,
+            "gemini-3.6-flash": target_gemini_35_list,
             "gemini-flash-lite-latest": target_lite_list,
         },
         "enable_model_rotation": False,
         "use_kaggle": False,
-        "force_model": {"gemini-3.5-flash": "auto", "gemini-flash-lite-latest": "auto"},
+        "force_model": {"gemini-3.6-flash": "auto", "gemini-flash-lite-latest": "auto"},
         "save_chat_logs": False,
         "filter_context": True,
         "vpn_switching_mode": "disabled",

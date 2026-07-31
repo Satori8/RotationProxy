@@ -31,7 +31,7 @@ logger = logging.getLogger("proxy")
 
 
 DEFAULT_THINKING_MODELS = [
-    "gemini-3.5-flash",
+    "gemini-3.6-flash",
     "gemini-3-flash-preview",
     "openrouter/owl-alpha",
     "deepseek/deepseek-v4-flash:free",
@@ -248,7 +248,7 @@ class ProxyGUI(ctk.CTk):
         ).pack(anchor="w", padx=10)
         thinking_models = [
             "Auto (Rotation)",
-            "gemini-3.5-flash",
+            "gemini-3.6-flash",
             "gemini-3-flash-preview",
             "openrouter/owl-alpha",
             "deepseek/deepseek-v4-flash:free",
@@ -261,7 +261,7 @@ class ProxyGUI(ctk.CTk):
             self.left_panel, values=thinking_models, command=self.on_thinking_select
         )
         self.thinking_select.pack(fill="x", padx=10, pady=(2, 10))
-        thinking_val = FORCE_MODEL.get("gemini-3.5-flash", "auto")
+        thinking_val = FORCE_MODEL.get("gemini-3.6-flash", "auto")
         if thinking_val == "auto":
             self.thinking_select.set("Auto (Rotation)")
         else:
@@ -544,7 +544,14 @@ class ProxyGUI(ctk.CTk):
         self.provider_var = ctk.StringVar(value="OpenRouter")
         self.provider_dropdown = ctk.CTkOptionMenu(
             self.left_manager_frame,
-            values=["OpenRouter", "Ollama", "LLM7", "Mistral", "OpenCode Zen", "Google"],
+            values=[
+                "OpenRouter",
+                "Ollama",
+                "LLM7",
+                "Mistral",
+                "OpenCode Zen",
+                "Google",
+            ],
             variable=self.provider_var,
             command=self.on_provider_change,
         )
@@ -581,7 +588,7 @@ class ProxyGUI(ctk.CTk):
         self.domain_select = ctk.CTkOptionMenu(
             self.right_manager_frame,
             values=[
-                "Thinking Models (gemini-3.5-flash)",
+                "Thinking Models (gemini-3.6-flash)",
                 "Quick Models (gemini-flash-lite-latest)",
             ],
             command=self.on_manager_domain_change,
@@ -602,7 +609,7 @@ class ProxyGUI(ctk.CTk):
         self.save_rotation_btn.grid(row=3, column=0, padx=10, pady=10, sticky="ew")
 
         # Load active rotation models on start
-        self.active_domain_key = "gemini-3.5-flash"
+        self.active_domain_key = "gemini-3.6-flash"
         self.active_rotation_list = []
         self.load_active_rotation_from_disk()
 
@@ -795,10 +802,10 @@ class ProxyGUI(ctk.CTk):
     def on_thinking_select(self, val):
         config = load_rotation_config()
         if val == "Auto (Rotation)":
-            config["force_model"]["gemini-3.5-flash"] = "auto"
+            config["force_model"]["gemini-3.6-flash"] = "auto"
             logger.info("Thinking domain priority model reset to Auto.")
         else:
-            config["force_model"]["gemini-3.5-flash"] = val
+            config["force_model"]["gemini-3.6-flash"] = val
             logger.info(f"Thinking domain priority model set to: {val}")
         save_rotation_config(config)
 
@@ -1320,7 +1327,9 @@ class ProxyGUI(ctk.CTk):
                                 {
                                     "id": model_id,
                                     "name": m.get("displayName", model_id),
-                                    "context_length": m.get("inputTokenLimit", "unknown"),
+                                    "context_length": m.get(
+                                        "inputTokenLimit", "unknown"
+                                    ),
                                     "provider": "google",
                                 }
                             )
@@ -1636,7 +1645,7 @@ class ProxyGUI(ctk.CTk):
     def on_manager_domain_change(self, val):
         """Handle active domain choice change from the selector menu."""
         if "Thinking Models" in val:
-            self.active_domain_key = "gemini-3.5-flash"
+            self.active_domain_key = "gemini-3.6-flash"
         else:
             self.active_domain_key = "gemini-flash-lite-latest"
         self.load_active_rotation_from_disk()
@@ -1845,7 +1854,7 @@ class ProxyGUI(ctk.CTk):
             rotation_lists = config.get("rotation_lists", {})
 
             # 1. Thinking models
-            thinking_list = rotation_lists.get("gemini-3.5-flash", [])
+            thinking_list = rotation_lists.get("gemini-3.6-flash", [])
             if not thinking_list:
                 thinking_list = DEFAULT_THINKING_MODELS
             # Ensure unique and preserve order, prepend Auto (Rotation)
@@ -1859,11 +1868,11 @@ class ProxyGUI(ctk.CTk):
 
             # Restore current selection or set to Auto if not found
             force_model_config = config.get("force_model", {})
-            thinking_val = force_model_config.get("gemini-3.5-flash", "auto")
+            thinking_val = force_model_config.get("gemini-3.6-flash", "auto")
             if thinking_val == "auto" or thinking_val not in thinking_values:
                 self.thinking_select.set("Auto (Rotation)")
                 if thinking_val != "auto" and thinking_val not in thinking_values:
-                    config["force_model"]["gemini-3.5-flash"] = "auto"
+                    config["force_model"]["gemini-3.6-flash"] = "auto"
                     save_rotation_config(config)
             else:
                 self.thinking_select.set(thinking_val)
@@ -2188,9 +2197,15 @@ class ProxyGUI(ctk.CTk):
             log_queue.put("=" * 50)
 
             if hasattr(self, "vpn_check_ips_btn") and self.vpn_check_ips_btn:
-                self.after(0, lambda: self.vpn_check_ips_btn.configure(state="normal", text="Check Tunnels IP"))
+                self.after(
+                    0,
+                    lambda: self.vpn_check_ips_btn.configure(
+                        state="normal", text="Check Tunnels IP"
+                    ),
+                )
 
         import threading
+
         threading.Thread(target=run_check, daemon=True).start()
 
     def on_vpn_reset_defaults(self):
@@ -2204,16 +2219,19 @@ class ProxyGUI(ctk.CTk):
             return
 
         import tkinter.messagebox as messagebox
+
         if not messagebox.askyesno(
             "Reset to Defaults",
-            "This will completely stop and uninstall all 6 VPN tunnels, clear all custom system routes, and restore your default Windows routing table.\n\nAre you sure you want to proceed?"
+            "This will completely stop and uninstall all 6 VPN tunnels, clear all custom system routes, and restore your default Windows routing table.\n\nAre you sure you want to proceed?",
         ):
             return
 
         if hasattr(self, "vpn_reset_defaults_btn") and self.vpn_reset_defaults_btn:
             self.vpn_reset_defaults_btn.configure(state="disabled", text="Resetting...")
 
-        log_queue.put("[GUI] [SYSTEM] Reverting all VPN and routing changes to system defaults...")
+        log_queue.put(
+            "[GUI] [SYSTEM] Reverting all VPN and routing changes to system defaults..."
+        )
 
         def run_reset():
             try:
@@ -2222,7 +2240,11 @@ class ProxyGUI(ctk.CTk):
                 self.system_vpn_active = False
 
                 try:
-                    from proxy_core.config import load_rotation_config, save_rotation_config
+                    from proxy_core.config import (
+                        load_rotation_config,
+                        save_rotation_config,
+                    )
+
                     cfg = load_rotation_config()
                     cfg["system_vpn_active"] = False
                     save_rotation_config(cfg)
@@ -2235,15 +2257,26 @@ class ProxyGUI(ctk.CTk):
                 # 3. Uninstall all 6 tunnels
                 self.vpn_manager.uninstall_all_services(print_cb=log_queue.put)
 
-                log_queue.put("[GUI] [SYSTEM] System routing and tunnel configurations successfully reset to defaults!")
+                log_queue.put(
+                    "[GUI] [SYSTEM] System routing and tunnel configurations successfully reset to defaults!"
+                )
             except Exception as e:
                 logger.error(f"[GUI] Error resetting to defaults: {e}")
                 log_queue.put(f"[GUI] [ERROR] Reset failed: {e}")
             finally:
-                if hasattr(self, "vpn_reset_defaults_btn") and self.vpn_reset_defaults_btn:
-                    self.after(0, lambda: self.vpn_reset_defaults_btn.configure(state="normal", text="Reset to Defaults"))
+                if (
+                    hasattr(self, "vpn_reset_defaults_btn")
+                    and self.vpn_reset_defaults_btn
+                ):
+                    self.after(
+                        0,
+                        lambda: self.vpn_reset_defaults_btn.configure(
+                            state="normal", text="Reset to Defaults"
+                        ),
+                    )
 
         import threading
+
         threading.Thread(target=run_reset, daemon=True).start()
 
     def on_vpn_stop_tunnels(self):

@@ -36,8 +36,8 @@ The right-hand panel of the CustomTkinter GUI is upgraded from a single text log
       - **"Test" Button**: Async background call to `POST /control/test_model`.
       - **"Add" Button**: Copy the model into the active rotation list.
   - Right Frame: **"Active Rotation Configuration"**
-    - List of models currently active in the rotation list for `"gemini-3.5-flash"`.
-    - Note: `"gemini-3.5-flash"` and `"gemini-3-flash"` remain at the top as core Google models, but the order of other models can be configured.
+    - List of models currently active in the rotation list for `"gemini-3.6-flash"`.
+    - Note: `"gemini-3.6-flash"` and `"gemini-3-flash"` remain at the top as core Google models, but the order of other models can be configured.
     - Each row includes:
       - Model ID.
       - **"Up" Button**: Shifts priority higher.
@@ -66,5 +66,5 @@ The right-hand panel of the CustomTkinter GUI is upgraded from a single text log
 ---
 
 ## 4. State Synchronization
-- When **"Save Rotation"** is clicked, it saves the list under `"rotation_lists" -> "gemini-3.5-flash"` in `config_rotation.json`.
+- When **"Save Rotation"** is clicked, it saves the list under `"rotation_lists" -> "gemini-3.6-flash"` in `config_rotation.json`.
 - The background server automatically reloads this JSON file on every incoming request, meaning no restarts are ever required.

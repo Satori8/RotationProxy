@@ -84,14 +84,14 @@ logger = logging.getLogger("proxy")
 
 ROTATION_CONFIG_PATH = "config_rotation.json"
 
-FORCE_MODEL = {"gemini-3.5-flash": "auto", "gemini-flash-lite-latest": "auto"}
+FORCE_MODEL = {"gemini-3.6-flash": "auto", "gemini-flash-lite-latest": "auto"}
 USE_KAGGLE = False
 SAVE_CHAT_LOGS = False
 KAGGLE_BASE_URL = "https://fine-cable-outside-escape.trycloudflare.com/v1"
 
 def load_rotation_config() -> dict:
     target_gemini_35_list = [
-        "gemini-3.5-flash",
+        "gemini-3.6-flash",
         "deepseek/deepseek-r1:free",
         "qwen/qwen-2.5-72b-instruct:free",
         "meta-llama/llama-3.3-70b-instruct:free",
@@ -122,11 +122,11 @@ def load_rotation_config() -> dict:
                 del config["rotation_lists"]["gemini-2.0-flash-lite"]
                 needs_upgrade = True
 
-            if "gemini-3.5-flash" not in config["rotation_lists"]:
-                config["rotation_lists"]["gemini-3.5-flash"] = target_gemini_35_list
+            if "gemini-3.6-flash" not in config["rotation_lists"]:
+                config["rotation_lists"]["gemini-3.6-flash"] = target_gemini_35_list
                 needs_upgrade = True
             else:
-                current_35_list = config["rotation_lists"]["gemini-3.5-flash"]
+                current_35_list = config["rotation_lists"]["gemini-3.6-flash"]
                 for model in target_gemini_35_list:
                     if model not in current_35_list:
                         current_35_list.append(model)
@@ -167,11 +167,11 @@ def load_rotation_config() -> dict:
         "model_cooldowns": {},
         "consecutive_model_failures": {},
         "rotation_lists": {
-            "gemini-3.5-flash": target_gemini_35_list,
+            "gemini-3.6-flash": target_gemini_35_list,
             "gemini-flash-lite-latest": target_lite_list,
         },
         "use_kaggle": False,
-        "force_model": {"gemini-3.5-flash": "auto", "gemini-flash-lite-latest": "auto"},
+        "force_model": {"gemini-3.6-flash": "auto", "gemini-flash-lite-latest": "auto"},
         "save_chat_logs": False,
     }
 
@@ -416,18 +416,18 @@ queue_handler = QueueLogHandler()
 queue_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
 logger.addHandler(queue_handler)
 
-PRIMARY_MODEL = "gemini-3.5-flash"
+PRIMARY_MODEL = "gemini-3.6-flash"
 FALLBACK_MODEL = "gemini-3-flash-preview"
 RETRY_DELAY_SECONDS = 90
 PROCESS_SESSION_ID = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 TARGET_BASE_URL = "https://generativelanguage.googleapis.com"
 
 MODEL_SETTINGS = {
-    "gemini-3.5-flash": {
+    "gemini-3.6-flash": {
         "provider": "gemini",
         "base_url": "https://generativelanguage.googleapis.com",
         "keys_pool": API_KEYS,
-        "target_model": "gemini-3.5-flash",
+        "target_model": "gemini-3.6-flash",
     },
     "gemini-3-flash-preview": {
         "provider": "gemini",
@@ -502,8 +502,8 @@ def get_requested_model(path: str, body: bytes) -> str:
         return "gemini-flash-lite-latest"
     if "gemini-3-flash-preview" in path:
         return "gemini-3-flash-preview"
-    if "gemini-3.5-flash" in path:
-        return "gemini-3.5-flash"
+    if "gemini-3.6-flash" in path:
+        return "gemini-3.6-flash"
 
     try:
         data = json.loads(body)
@@ -511,7 +511,7 @@ def get_requested_model(path: str, body: bytes) -> str:
             return data["model"]
     except Exception:
         pass
-    return "gemini-3.5-flash"
+    return "gemini-3.6-flash"
 
 def extract_chat_messages(body: bytes) -> list:
     try:
@@ -813,8 +813,8 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
         if provider_name == "gemini":
             target_path = path
-            if "gemini-3.5-flash" in path and candidate_model != "gemini-3.5-flash":
-                target_path = path.replace("gemini-3.5-flash", target_model_id)
+            if "gemini-3.6-flash" in path and candidate_model != "gemini-3.6-flash":
+                target_path = path.replace("gemini-3.6-flash", target_model_id)
             elif "gemini-flash-lite-latest" in path and candidate_model != "gemini-flash-lite-latest":
                 target_path = path.replace("gemini-flash-lite-latest", target_model_id)
             elif "gemini-2.0-flash-lite" in path and candidate_model != "gemini-flash-lite-latest":
@@ -1165,7 +1165,7 @@ class ProxyGUI(ctk.CTk):
         ).pack(anchor="w", padx=20)
         thinking_models = [
             "Auto (Rotation)",
-            "gemini-3.5-flash",
+            "gemini-3.6-flash",
             "deepseek/deepseek-r1:free",
             "qwen/qwen-2.5-72b-instruct:free",
             "meta-llama/llama-3.3-70b-instruct:free",
@@ -1175,7 +1175,7 @@ class ProxyGUI(ctk.CTk):
             self.left_panel, values=thinking_models, command=self.on_thinking_select
         )
         self.thinking_select.pack(fill="x", padx=20, pady=(2, 15))
-        thinking_val = FORCE_MODEL.get("gemini-3.5-flash", "auto")
+        thinking_val = FORCE_MODEL.get("gemini-3.6-flash", "auto")
         if thinking_val == "auto":
             self.thinking_select.set("Auto (Rotation)")
         else:
@@ -1288,10 +1288,10 @@ class ProxyGUI(ctk.CTk):
     def on_thinking_select(self, val):
         config = load_rotation_config()
         if val == "Auto (Rotation)":
-            config["force_model"]["gemini-3.5-flash"] = "auto"
+            config["force_model"]["gemini-3.6-flash"] = "auto"
             logger.info("Thinking domain priority model reset to Auto.")
         else:
-            config["force_model"]["gemini-3.5-flash"] = val
+            config["force_model"]["gemini-3.6-flash"] = val
             logger.info(f"Thinking domain priority model set to: {val}")
         save_rotation_config(config)
 

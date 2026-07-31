@@ -10,7 +10,7 @@
 5. **Rework fallback list:**
    - Use only FREE models.
    - For `gemini-flash-lite`, the correct name is `gemini-flash-lite-latest`.
-   - Expand `gemini-3.5-flash` with the "most thinking" free models (such as deepseek R1 free, qwen coder free, or other thinking free models from OpenRouter).
+   - Expand `gemini-3.6-flash` with the "most thinking" free models (such as deepseek R1 free, qwen coder free, or other thinking free models from OpenRouter).
    - Expand `gemini-flash-lite-latest` with the "fastest" free models (OpenCode Zen + OpenRouter free).
 
 **Tech Stack:** FastAPI, Asyncio, httpx, Python 3.12+
@@ -102,7 +102,7 @@ In the successful `response.status_code == 200` branch, call `remove_key_from_er
 
 - [ ] **Step 1: Replace duplicate `MODEL_SETTINGS` with unified expanded version**
 Clean up the duplicate dictionaries and define one complete `MODEL_SETTINGS` mapping at the top of `proxy3.py` featuring the expanded free models:
-- google-flash-3.5 domain: `gemini-3.5-flash`, `deepseek/deepseek-r1:free`, `qwen/qwen-2.5-72b-instruct:free`, `meta-llama/llama-3.3-70b-instruct:free`, `deepseek/deepseek-chat:free`.
+- google-flash-3.5 domain: `gemini-3.6-flash`, `deepseek/deepseek-r1:free`, `qwen/qwen-2.5-72b-instruct:free`, `meta-llama/llama-3.3-70b-instruct:free`, `deepseek/deepseek-chat:free`.
 - flash-lite domain: `gemini-flash-lite-latest`, `deepseek-v4-flash-free`, `mimo-v2.5-free`, `nemotron-3-super-free`, `google/gemini-2.5-flash:free`, `google/gemma-2-9b-it:free`, `meta-llama/llama-3.1-8b-instruct:free`, `qwen/qwen-2.5-coder-32b-instruct:free`.
 
 - [ ] **Step 2: Rename `gemini-2.0-flash-lite` to `gemini-flash-lite-latest`**

@@ -1,15 +1,14 @@
 {
-  "last_fallback_switch_time": 1784253391.7707057,
+  "last_fallback_switch_time": 1785442002.2997224,
   "model_cooldowns": {},
   "consecutive_model_failures": {
-    "gemini-3.5-flash": 0,
+    "gemini-3.6-flash": 0,
     "minimax-3": 0,
     "gemini-flash-lite-latest": 0
   },
   "rotation_lists": {
-    "gemini-3.5-flash": [
-      "gemini-3.5-flash",
-      "ollama/minimax-m3",
+    "gemini-3.6-flash": [
+      "gemini-3.6-flash",
       "gemini-3-flash-preview",
       "openrouter/owl-alpha",
       "deepseek/deepseek-v4-flash:free",
@@ -26,11 +25,20 @@
       "z-ai/glm-4.5-air:free",
       "meta-llama/llama-3.2-3b-instruct:free",
       "qwen/qwen3-coder:free"
+    ],
+    "gemini-3.5-flash": [
+      "gemini-3.5-flash",
+      "gemini-3-flash-preview",
+      "openrouter/owl-alpha",
+      "deepseek/deepseek-v4-flash:free",
+      "meta-llama/llama-3.3-70b-instruct:free",
+      "qwen/qwen3-coder:free",
+      "moonshotai/kimi-k2.6:free"
     ]
   },
   "use_kaggle": false,
   "force_model": {
-    "gemini-3.5-flash": "gemini-3.5-flash",
+    "gemini-3.6-flash": "gemini-3.6-flash",
     "gemini-flash-lite-latest": "auto"
   },
   "save_chat_logs": false,

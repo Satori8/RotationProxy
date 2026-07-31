@@ -321,18 +321,18 @@ def track_and_check_safety_limit():
         )
 
 
-PRIMARY_MODEL = "gemini-3.5-flash"
+PRIMARY_MODEL = "gemini-3.6-flash"
 FALLBACK_MODEL = "gemini-3-flash-preview"
 RETRY_DELAY_SECONDS = 90
 PROCESS_SESSION_ID = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 TARGET_BASE_URL = "https://generativelanguage.googleapis.com"
 
 MODEL_SETTINGS = {
-    "gemini-3.5-flash": {
+    "gemini-3.6-flash": {
         "provider": "gemini",
         "base_url": "https://generativelanguage.googleapis.com",
         "keys_pool": API_KEYS,
-        "target_model": "gemini-3.5-flash",
+        "target_model": "gemini-3.6-flash",
     },
     "gemini-3-flash": {
         "provider": "gemini",
@@ -415,7 +415,7 @@ MODEL_SETTINGS = {
 }
 
 THINKING_MODELS = {
-    "gemini-3.5-flash",
+    "gemini-3.6-flash",
     "gemini-3-flash",
     "openrouter/owl-alpha",
     "deepseek/deepseek-v4-flash:free",
@@ -1076,8 +1076,8 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
     # Identify domain and check for manual override
     forced_model = "auto"
-    if requested_model in THINKING_MODELS or requested_model == "gemini-3.5-flash":
-        forced_model = FORCE_MODEL.get("gemini-3.5-flash", "auto")
+    if requested_model in THINKING_MODELS or requested_model == "gemini-3.6-flash":
+        forced_model = FORCE_MODEL.get("gemini-3.6-flash", "auto")
     elif (
         requested_model in QUICK_MODELS or requested_model == "gemini-flash-lite-latest"
     ):
@@ -1305,8 +1305,8 @@ async def _transparent_proxy_attempt(request: Request, path: str):
             target_path = path
             if target_path.startswith("google/"):
                 target_path = target_path[7:]
-            if "gemini-3.5-flash" in path and candidate_model != "gemini-3.5-flash":
-                target_path = path.replace("gemini-3.5-flash", target_model_id)
+            if "gemini-3.6-flash" in path and candidate_model != "gemini-3.6-flash":
+                target_path = path.replace("gemini-3.6-flash", target_model_id)
             elif (
                 "gemini-flash-lite-latest" in path
                 and candidate_model != "gemini-flash-lite-latest"
@@ -1391,10 +1391,10 @@ async def _transparent_proxy_attempt(request: Request, path: str):
             current_force_model = current_config.get("force_model", {})
             if (
                 requested_model in THINKING_MODELS
-                or requested_model == "gemini-3.5-flash"
+                or requested_model == "gemini-3.6-flash"
             ):
                 current_forced_model = current_force_model.get(
-                    "gemini-3.5-flash", "auto"
+                    "gemini-3.6-flash", "auto"
                 )
             elif (
                 requested_model in QUICK_MODELS
