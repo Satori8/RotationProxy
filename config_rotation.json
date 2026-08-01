@@ -10,8 +10,7 @@
   },
   "thinking_models": [
     "gemini-3.6-flash",
-    "gemini-3-flash",
-    "gemini-3-flash-preview",
+    "gemini-3.5-flash",
     "openrouter/owl-alpha",
     "deepseek/deepseek-v4-flash:free",
     "meta-llama/llama-3.3-70b-instruct:free",
@@ -21,7 +20,6 @@
   ],
   "quick_models": [
     "gemini-flash-lite-latest",
-    "gemini-2.0-flash-lite",
     "deepseek-v4-flash-free",
     "mimo-v2.5-free",
     "nemotron-3-super-free",
@@ -149,7 +147,7 @@
   },
   "use_kaggle": false,
   "force_model": {
-    "gemini-3.6-flash": "gemini-3.6-flash",
+    "gemini-3.6-flash": "auto",
     "gemini-flash-lite-latest": "auto"
   },
   "save_chat_logs": false,

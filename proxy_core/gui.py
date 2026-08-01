@@ -1281,10 +1281,22 @@ class ProxyGUI(ctk.CTk):
                 url = "https://generativelanguage.googleapis.com/v1beta/models"
                 try:
                     from proxy_core.rotation import API_KEYS
+                    from proxy_core.state import COOLDOWNS, LAST_USED
 
                     headers = {"User-Agent": "Mozilla/5.0"}
                     if API_KEYS:
-                        headers["x-goog-api-key"] = API_KEYS[0]
+                        now = time.time()
+                        available_keys = [
+                            k for k in API_KEYS if COOLDOWNS.get(k, 0.0) < now
+                        ]
+                        if not available_keys:
+                            available_keys = API_KEYS
+                        available_keys = sorted(
+                            available_keys, key=lambda k: LAST_USED.get(k, 0.0)
+                        )
+                        api_key = available_keys[0]
+                        headers["x-goog-api-key"] = api_key
+                        headers["Authorization"] = f"Bearer {api_key}"
                     req = urllib.request.Request(url, headers=headers)
                     with urllib.request.urlopen(req, timeout=8.0) as response:
                         raw_data = response.read().decode("utf-8")

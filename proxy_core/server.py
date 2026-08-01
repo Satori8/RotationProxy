@@ -659,32 +659,28 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
         actual_vpn_index = current_vpn_index if VPN_ANY_TUNNEL_ACTIVE else 0
     client = get_active_vpn_client(request, vpn_mode, vpn_static, current_vpn_index)
 
-    # Pick the key (use rotation logic for google/gemini to select the correct active key)
+    # Pick the key using rotation logic to select the correct active key from pool
+    now = time.time()
+    available_keys = [k for k in keys_pool if COOLDOWNS.get(k, 0.0) < now]
+    if not available_keys:
+        available_keys = keys_pool
+    available_keys = sorted(available_keys, key=lambda k: LAST_USED.get(k, 0.0))
+    key_idx = current_vpn_index % len(available_keys)
+    api_key = available_keys[key_idx]
+
+    headers = {
+        "Content-Type": "application/json",
+        "authorization": f"Bearer {api_key}",
+    }
     if provider_name in ("google", "gemini"):
-        now = time.time()
-        available_keys = [k for k in keys_pool if COOLDOWNS.get(k, 0.0) < now]
-        if not available_keys:
-            available_keys = keys_pool
-        available_keys = sorted(available_keys, key=lambda k: LAST_USED.get(k, 0.0))
-        key_idx = current_vpn_index % len(available_keys)
-        api_key = available_keys[key_idx]
-    else:
-        api_key = keys_pool[0]
-    headers = {"Content-Type": "application/json"}
-    if provider_name in (
-        "openrouter",
-        "mistral",
-        "llm7",
-        "ollama",
-        "ollama_cloud",
-        "opencode_zen",
-    ):
-        headers["authorization"] = f"Bearer {api_key}"
-    else:
         headers["x-goog-api-key"] = api_key
 
     # Build payload
-    test_body = {"model": model_id, "messages": [{"role": "user", "content": "Hi"}]}
+    clean_model_id = model_id[7:] if model_id.startswith("google/") else model_id
+    test_body = {
+        "model": clean_model_id,
+        "messages": [{"role": "user", "content": "Hi"}],
+    }
 
     if provider_name == "ollama":
         url = f"{base_url}/api/chat"
