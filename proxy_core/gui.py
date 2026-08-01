@@ -16,7 +16,6 @@ ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 from proxy_core.config import (
     load_rotation_config,
     save_rotation_config,
-    FORCE_MODEL,
     USE_KAGGLE,
     SAVE_CHAT_LOGS,
     KAGGLE_BASE_URL,
@@ -28,28 +27,6 @@ from proxy_core.helpers import beautify_json_string
 import logging
 
 logger = logging.getLogger("proxy")
-
-
-DEFAULT_THINKING_MODELS = [
-    "gemini-3.6-flash",
-    "gemini-3-flash-preview",
-    "openrouter/owl-alpha",
-    "deepseek/deepseek-v4-flash:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "qwen/qwen3-coder:free",
-    "moonshotai/kimi-k2.6:free",
-]
-
-DEFAULT_QUICK_MODELS = [
-    "gemini-flash-lite-latest",
-    "deepseek-v4-flash-free",
-    "mimo-v2.5-free",
-    "nemotron-3-super-free",
-    "google/gemini-2.5-flash:free",
-    "google/gemma-2-9b-it:free",
-    "meta-llama/llama-3.1-8b-instruct:free",
-    "qwen/qwen-2.5-coder-32b-instruct:free",
-]
 
 
 def run_server_subprocess(host: str, port: int, reload: bool):
@@ -187,8 +164,10 @@ class ProxyGUI(ctk.CTk):
 
         config = load_rotation_config()
         config_force_model = config.get("force_model", {})
-        for k, v in config_force_model.items():
-            FORCE_MODEL[k] = v
+        primary_model = config.get("primary_model", "")
+        thinking_models_list = config.get("thinking_models", [])
+        quick_models_list = config.get("quick_models", [])
+        quick_primary_model = quick_models_list[0] if quick_models_list else ""
 
         self.title("Resilient Key Rotation Proxy")
         self.geometry("1200x700")
@@ -246,22 +225,14 @@ class ProxyGUI(ctk.CTk):
             text="Thinking Domain Priority:",
             font=ctk.CTkFont(size=10, weight="bold"),
         ).pack(anchor="w", padx=10)
-        thinking_models = [
-            "Auto (Rotation)",
-            "gemini-3.6-flash",
-            "gemini-3-flash-preview",
-            "openrouter/owl-alpha",
-            "deepseek/deepseek-v4-flash:free",
-            "deepseek/deepseek-r1:free",
-            "meta-llama/llama-3.3-70b-instruct:free",
-            "qwen/qwen3-coder:free",
-            "moonshotai/kimi-k2.6:free",
+        thinking_models = ["Auto (Rotation)"] + [
+            m for m in thinking_models_list if m != "Auto (Rotation)"
         ]
         self.thinking_select = ctk.CTkOptionMenu(
             self.left_panel, values=thinking_models, command=self.on_thinking_select
         )
         self.thinking_select.pack(fill="x", padx=10, pady=(2, 10))
-        thinking_val = FORCE_MODEL.get("gemini-3.6-flash", "auto")
+        thinking_val = config_force_model.get(primary_model, "auto")
         if thinking_val == "auto":
             self.thinking_select.set("Auto (Rotation)")
         else:
@@ -272,22 +243,14 @@ class ProxyGUI(ctk.CTk):
             text="Quick Domain Priority:",
             font=ctk.CTkFont(size=10, weight="bold"),
         ).pack(anchor="w", padx=10)
-        quick_models = [
-            "Auto (Rotation)",
-            "gemini-flash-lite-latest",
-            "deepseek-v4-flash-free",
-            "mimo-v2.5-free",
-            "nemotron-3-super-free",
-            "google/gemini-2.5-flash:free",
-            "google/gemma-2-9b-it:free",
-            "meta-llama/llama-3.1-8b-instruct:free",
-            "qwen/qwen-2.5-coder-32b-instruct:free",
+        quick_models = ["Auto (Rotation)"] + [
+            m for m in quick_models_list if m != "Auto (Rotation)"
         ]
         self.quick_select = ctk.CTkOptionMenu(
             self.left_panel, values=quick_models, command=self.on_quick_select
         )
         self.quick_select.pack(fill="x", padx=10, pady=(2, 10))
-        quick_val = FORCE_MODEL.get("gemini-flash-lite-latest", "auto")
+        quick_val = config_force_model.get(quick_primary_model, "auto")
         if quick_val == "auto":
             self.quick_select.set("Auto (Rotation)")
         else:
@@ -801,21 +764,32 @@ class ProxyGUI(ctk.CTk):
 
     def on_thinking_select(self, val):
         config = load_rotation_config()
+        primary_model = config.get("primary_model", "")
+        if "force_model" not in config:
+            config["force_model"] = {}
         if val == "Auto (Rotation)":
-            config["force_model"]["gemini-3.6-flash"] = "auto"
+            if primary_model:
+                config["force_model"][primary_model] = "auto"
             logger.info("Thinking domain priority model reset to Auto.")
         else:
-            config["force_model"]["gemini-3.6-flash"] = val
+            if primary_model:
+                config["force_model"][primary_model] = val
             logger.info(f"Thinking domain priority model set to: {val}")
         save_rotation_config(config)
 
     def on_quick_select(self, val):
         config = load_rotation_config()
+        quick_models_list = config.get("quick_models", [])
+        quick_model_key = quick_models_list[0] if quick_models_list else ""
+        if "force_model" not in config:
+            config["force_model"] = {}
         if val == "Auto (Rotation)":
-            config["force_model"]["gemini-flash-lite-latest"] = "auto"
+            if quick_model_key:
+                config["force_model"][quick_model_key] = "auto"
             logger.info("Quick domain priority model reset to Auto.")
         else:
-            config["force_model"]["gemini-flash-lite-latest"] = val
+            if quick_model_key:
+                config["force_model"][quick_model_key] = val
             logger.info(f"Quick domain priority model set to: {val}")
         save_rotation_config(config)
 
@@ -1644,10 +1618,14 @@ class ProxyGUI(ctk.CTk):
 
     def on_manager_domain_change(self, val):
         """Handle active domain choice change from the selector menu."""
+        config = load_rotation_config()
+        primary_model = config.get("primary_model", "")
+        quick_models_list = config.get("quick_models", [])
+        quick_model_key = quick_models_list[0] if quick_models_list else ""
         if "Thinking Models" in val:
-            self.active_domain_key = "gemini-3.6-flash"
+            self.active_domain_key = primary_model
         else:
-            self.active_domain_key = "gemini-flash-lite-latest"
+            self.active_domain_key = quick_model_key
         self.load_active_rotation_from_disk()
         logger.info(
             f"[GUI] Switched manager domain selection to: {self.active_domain_key}"
@@ -1852,11 +1830,15 @@ class ProxyGUI(ctk.CTk):
         try:
             config = load_rotation_config()
             rotation_lists = config.get("rotation_lists", {})
+            primary_model = config.get("primary_model", "")
+            thinking_models_list = config.get("thinking_models", [])
+            quick_models_list = config.get("quick_models", [])
+            quick_model_key = quick_models_list[0] if quick_models_list else ""
 
             # 1. Thinking models
-            thinking_list = rotation_lists.get("gemini-3.6-flash", [])
+            thinking_list = rotation_lists.get(primary_model, thinking_models_list)
             if not thinking_list:
-                thinking_list = DEFAULT_THINKING_MODELS
+                thinking_list = thinking_models_list
             # Ensure unique and preserve order, prepend Auto (Rotation)
             thinking_values = ["Auto (Rotation)"]
             for m in thinking_list:
@@ -1868,19 +1850,23 @@ class ProxyGUI(ctk.CTk):
 
             # Restore current selection or set to Auto if not found
             force_model_config = config.get("force_model", {})
-            thinking_val = force_model_config.get("gemini-3.6-flash", "auto")
+            thinking_val = force_model_config.get(primary_model, "auto")
             if thinking_val == "auto" or thinking_val not in thinking_values:
                 self.thinking_select.set("Auto (Rotation)")
-                if thinking_val != "auto" and thinking_val not in thinking_values:
-                    config["force_model"]["gemini-3.6-flash"] = "auto"
+                if (
+                    thinking_val != "auto"
+                    and thinking_val not in thinking_values
+                    and primary_model
+                ):
+                    config.setdefault("force_model", {})[primary_model] = "auto"
                     save_rotation_config(config)
             else:
                 self.thinking_select.set(thinking_val)
 
             # 2. Quick models
-            quick_list = rotation_lists.get("gemini-flash-lite-latest", [])
+            quick_list = rotation_lists.get(quick_model_key, quick_models_list)
             if not quick_list:
-                quick_list = DEFAULT_QUICK_MODELS
+                quick_list = quick_models_list
             quick_values = ["Auto (Rotation)"]
             for m in quick_list:
                 if m not in quick_values:
@@ -1888,11 +1874,15 @@ class ProxyGUI(ctk.CTk):
 
             self.quick_select.configure(values=quick_values)
 
-            quick_val = force_model_config.get("gemini-flash-lite-latest", "auto")
+            quick_val = force_model_config.get(quick_model_key, "auto")
             if quick_val == "auto" or quick_val not in quick_values:
                 self.quick_select.set("Auto (Rotation)")
-                if quick_val != "auto" and quick_val not in quick_values:
-                    config["force_model"]["gemini-flash-lite-latest"] = "auto"
+                if (
+                    quick_val != "auto"
+                    and quick_val not in quick_values
+                    and quick_model_key
+                ):
+                    config.setdefault("force_model", {})[quick_model_key] = "auto"
                     save_rotation_config(config)
             else:
                 self.quick_select.set(quick_val)

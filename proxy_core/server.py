@@ -18,7 +18,6 @@ from proxy_core.logger import PlainFormatter
 from proxy_core.config import (
     load_rotation_config,
     save_rotation_config,
-    FORCE_MODEL,
     USE_KAGGLE,
     SAVE_CHAT_LOGS,
     KAGGLE_BASE_URL,
@@ -321,121 +320,65 @@ def track_and_check_safety_limit():
         )
 
 
-PRIMARY_MODEL = "gemini-3.6-flash"
-FALLBACK_MODEL = "gemini-3-flash-preview"
 RETRY_DELAY_SECONDS = 90
 PROCESS_SESSION_ID = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 TARGET_BASE_URL = "https://generativelanguage.googleapis.com"
 
-MODEL_SETTINGS = {
-    "gemini-3.6-flash": {
-        "provider": "gemini",
-        "base_url": "https://generativelanguage.googleapis.com",
-        "keys_pool": API_KEYS,
-        "target_model": "gemini-3.6-flash",
-    },
-    "gemini-3-flash": {
-        "provider": "gemini",
-        "base_url": "https://generativelanguage.googleapis.com",
-        "keys_pool": API_KEYS,
-        "target_model": "gemini-3-flash",
-    },
-    "gemini-3-flash-preview": {
-        "provider": "gemini",
-        "base_url": "https://generativelanguage.googleapis.com",
-        "keys_pool": API_KEYS,
-        "target_model": "gemini-3-flash-preview",
-    },
-    "openrouter/owl-alpha": {
-        "provider": "openrouter",
-        "base_url": "https://openrouter.ai/api/v1",
-        "keys_pool": OPENROUTER_KEYS,
-        "target_model": "openrouter/owl-alpha",
-    },
-    "deepseek-v4-flash": {
-        "provider": "openrouter",
-        "base_url": "https://openrouter.ai/api/v1",
-        "keys_pool": OPENROUTER_KEYS,
-        "target_model": "deepseek-v4-flash",
-    },
-    "gemini-flash-lite-latest": {
-        "provider": "gemini",
-        "base_url": "https://generativelanguage.googleapis.com",
-        "keys_pool": API_KEYS,
-        "target_model": "gemini-flash-lite-latest",
-    },
-    "deepseek-v4-flash-free": {
-        "provider": "openrouter",
-        "base_url": "https://openrouter.ai/api/v1",
-        "keys_pool": OPENROUTER_KEYS,
-        "target_model": "deepseek-v4-flash-free",
-    },
-    "deepseek/deepseek-v4-flash:free": {
-        "provider": "openrouter",
-        "base_url": "https://openrouter.ai/api/v1",
-        "keys_pool": OPENROUTER_KEYS,
-        "target_model": "deepseek/deepseek-v4-flash:free",
-    },
-    "mimo-v2.5-free": {
-        "provider": "openrouter",
-        "base_url": "https://openrouter.ai/api/v1",
-        "keys_pool": OPENROUTER_KEYS,
-        "target_model": "mimo-v2.5-free",
-    },
-    "nemotron-3-super-free": {
-        "provider": "openrouter",
-        "base_url": "https://openrouter.ai/api/v1",
-        "keys_pool": OPENROUTER_KEYS,
-        "target_model": "nemotron-3-super-free",
-    },
-    "deepseek/deepseek-r1:free": {
-        "provider": "openrouter",
-        "base_url": "https://openrouter.ai/api/v1",
-        "keys_pool": OPENROUTER_KEYS,
-        "target_model": "deepseek/deepseek-r1:free",
-    },
-    "meta-llama/llama-3.3-70b-instruct:free": {
-        "provider": "openrouter",
-        "base_url": "https://openrouter.ai/api/v1",
-        "keys_pool": OPENROUTER_KEYS,
-        "target_model": "meta-llama/llama-3.3-70b-instruct:free",
-    },
-    "qwen/qwen3-coder:free": {
-        "provider": "openrouter",
-        "base_url": "https://openrouter.ai/api/v1",
-        "keys_pool": OPENROUTER_KEYS,
-        "target_model": "qwen/qwen3-coder:free",
-    },
-    "moonshotai/kimi-k2.6:free": {
-        "provider": "openrouter",
-        "base_url": "https://openrouter.ai/api/v1",
-        "keys_pool": OPENROUTER_KEYS,
-        "target_model": "moonshotai/kimi-k2.6:free",
-    },
+KEYS_POOLS = {
+    "API_KEYS": API_KEYS,
+    "OPENROUTER_KEYS": OPENROUTER_KEYS,
+    "OLLAMA_CLOUD_KEYS": OLLAMA_CLOUD_KEYS,
+    "MISTRAL_KEYS": MISTRAL_KEYS,
+    "LLM7_KEYS": LLM7_KEYS,
+    "OPENCODE_KEYS": OPENCODE_KEYS,
 }
 
-THINKING_MODELS = {
-    "gemini-3.6-flash",
-    "gemini-3-flash",
-    "openrouter/owl-alpha",
-    "deepseek/deepseek-v4-flash:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "qwen/qwen3-coder:free",
-    "moonshotai/kimi-k2.6:free",
-    "deepseek/deepseek-r1:free",
-}
 
-QUICK_MODELS = {
-    "gemini-flash-lite-latest",
-    "gemini-2.0-flash-lite",
-    "deepseek-v4-flash-free",
-    "mimo-v2.5-free",
-    "nemotron-3-super-free",
-    "google/gemini-2.5-flash:free",
-    "google/gemma-2-9b-it:free",
-    "meta-llama/llama-3.1-8b-instruct:free",
-    "qwen/qwen-2.5-coder-32b-instruct:free",
-}
+def load_initial_model_settings() -> dict:
+    config = load_rotation_config()
+    raw_settings = config.get("model_settings", {})
+    resolved = {}
+    for model_id, cfg in raw_settings.items():
+        pool_val = cfg.get("keys_pool")
+        keys_pool = (
+            KEYS_POOLS.get(pool_val, API_KEYS)
+            if isinstance(pool_val, str)
+            else pool_val
+        )
+        resolved[model_id] = {
+            "provider": cfg.get("provider", "gemini"),
+            "base_url": cfg.get("base_url", TARGET_BASE_URL),
+            "keys_pool": keys_pool,
+            "target_model": cfg.get("target_model", model_id),
+        }
+    return resolved
+
+
+def get_thinking_models() -> set:
+    config = load_rotation_config()
+    return set(config.get("thinking_models", []))
+
+
+def get_quick_models() -> set:
+    config = load_rotation_config()
+    return set(config.get("quick_models", []))
+
+
+def get_primary_model() -> str:
+    config = load_rotation_config()
+    return config.get("primary_model", "")
+
+
+def get_fallback_model() -> str:
+    config = load_rotation_config()
+    return config.get("fallback_model", "")
+
+
+MODEL_SETTINGS = load_initial_model_settings()
+PRIMARY_MODEL = get_primary_model()
+FALLBACK_MODEL = get_fallback_model()
+THINKING_MODELS = get_thinking_models()
+QUICK_MODELS = get_quick_models()
 
 EXCLUDED_HEADERS = {
     "content-encoding",
@@ -1054,12 +997,10 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
     requested_model = get_requested_model(path, body)
 
-    global USE_KAGGLE, FORCE_MODEL, SAVE_CHAT_LOGS
+    global USE_KAGGLE, SAVE_CHAT_LOGS
     USE_KAGGLE = rotation_config.get("use_kaggle", USE_KAGGLE)
     SAVE_CHAT_LOGS = rotation_config.get("save_chat_logs", SAVE_CHAT_LOGS)
     config_force_model = rotation_config.get("force_model", {})
-    for k, v in config_force_model.items():
-        FORCE_MODEL[k] = v
 
     enable_model_rotation = rotation_config.get("enable_model_rotation", False)
     if enable_model_rotation:
@@ -1076,14 +1017,22 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
     # Identify domain and check for manual override
     forced_model = "auto"
-    if requested_model in THINKING_MODELS or requested_model == "gemini-3.6-flash":
-        forced_model = FORCE_MODEL.get("gemini-3.6-flash", "auto")
-    elif (
-        requested_model in QUICK_MODELS or requested_model == "gemini-flash-lite-latest"
-    ):
-        forced_model = FORCE_MODEL.get("gemini-flash-lite-latest", "auto")
+    thinking_models = get_thinking_models()
+    quick_models = get_quick_models()
+    primary = get_primary_model()
+    if requested_model in thinking_models or (primary and requested_model == primary):
+        forced_model = config_force_model.get(primary, "auto")
+    elif requested_model in quick_models:
+        quick_primary = (
+            rotation_config.get("quick_models", [""])[0]
+            if rotation_config.get("quick_models")
+            else ""
+        )
+        forced_model = (
+            config_force_model.get(quick_primary, "auto") if quick_primary else "auto"
+        )
     else:
-        forced_model = FORCE_MODEL.get(requested_model, "auto")
+        forced_model = config_force_model.get(requested_model, "auto")
 
     now = time.time()
     if forced_model != "auto":
@@ -1305,18 +1254,8 @@ async def _transparent_proxy_attempt(request: Request, path: str):
             target_path = path
             if target_path.startswith("google/"):
                 target_path = target_path[7:]
-            if "gemini-3.6-flash" in path and candidate_model != "gemini-3.6-flash":
-                target_path = path.replace("gemini-3.6-flash", target_model_id)
-            elif (
-                "gemini-flash-lite-latest" in path
-                and candidate_model != "gemini-flash-lite-latest"
-            ):
-                target_path = path.replace("gemini-flash-lite-latest", target_model_id)
-            elif (
-                "gemini-2.0-flash-lite" in path
-                and candidate_model != "gemini-flash-lite-latest"
-            ):
-                target_path = path.replace("gemini-2.0-flash-lite", target_model_id)
+            if requested_model and requested_model in path and candidate_model != requested_model:
+                target_path = path.replace(requested_model, target_model_id)
         else:
             if is_gemini_client:
                 target_path = "chat/completions"
@@ -1389,19 +1328,21 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
             current_config = load_rotation_config()
             current_force_model = current_config.get("force_model", {})
-            if (
-                requested_model in THINKING_MODELS
-                or requested_model == "gemini-3.6-flash"
-            ):
-                current_forced_model = current_force_model.get(
-                    "gemini-3.6-flash", "auto"
+            thinking_models = get_thinking_models()
+            quick_models = get_quick_models()
+            primary = get_primary_model()
+            if requested_model in thinking_models or (primary and requested_model == primary):
+                current_forced_model = current_force_model.get(primary, "auto")
+            elif requested_model in quick_models:
+                quick_primary = (
+                    current_config.get("quick_models", [""])[0]
+                    if current_config.get("quick_models")
+                    else ""
                 )
-            elif (
-                requested_model in QUICK_MODELS
-                or requested_model == "gemini-flash-lite-latest"
-            ):
-                current_forced_model = current_force_model.get(
-                    "gemini-flash-lite-latest", "auto"
+                current_forced_model = (
+                    current_force_model.get(quick_primary, "auto")
+                    if quick_primary
+                    else "auto"
                 )
             else:
                 current_forced_model = current_force_model.get(requested_model, "auto")

@@ -6,7 +6,6 @@ logger = logging.getLogger("proxy")
 
 ROTATION_CONFIG_PATH = "config_rotation.json"
 
-FORCE_MODEL = {"gemini-3.6-flash": "auto", "gemini-flash-lite-latest": "auto"}
 USE_KAGGLE = False
 SAVE_CHAT_LOGS = False
 KAGGLE_BASE_URL = "https://fine-cable-outside-escape.trycloudflare.com/v1"
@@ -51,26 +50,6 @@ def save_kaggle_url(new_url: str) -> bool:
 
 
 def load_rotation_config() -> dict:
-    target_gemini_35_list = [
-        "gemini-3.6-flash",
-        "gemini-3-flash-preview",
-        "openrouter/owl-alpha",
-        "deepseek/deepseek-v4-flash:free",
-        "meta-llama/llama-3.3-70b-instruct:free",
-        "qwen/qwen3-coder:free",
-        "moonshotai/kimi-k2.6:free",
-    ]
-    target_lite_list = [
-        "gemini-flash-lite-latest",
-        "deepseek/deepseek-v4-flash:free",
-        "liquid/lfm-2.5-1.2b-thinking:free",
-        "liquid/lfm-2.5-1.2b-instruct:free",
-        "nvidia/nemotron-nano-9b-v2:free",
-        "z-ai/glm-4.5-air:free",
-        "meta-llama/llama-3.2-3b-instruct:free",
-        "qwen/qwen3-coder:free",
-    ]
-
     try:
         if os.path.exists(ROTATION_CONFIG_PATH):
             with open(ROTATION_CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -81,30 +60,6 @@ def load_rotation_config() -> dict:
                 config["rotation_lists"] = {}
                 needs_upgrade = True
 
-            if "gemini-2.0-flash-lite" in config.get("rotation_lists", {}):
-                del config["rotation_lists"]["gemini-2.0-flash-lite"]
-                needs_upgrade = True
-
-            if "gemini-3.6-flash" not in config["rotation_lists"]:
-                config["rotation_lists"]["gemini-3.6-flash"] = target_gemini_35_list
-                needs_upgrade = True
-            else:
-                current_35_list = config["rotation_lists"]["gemini-3.6-flash"]
-                for model in target_gemini_35_list:
-                    if model not in current_35_list:
-                        current_35_list.append(model)
-                        needs_upgrade = True
-
-            if "gemini-flash-lite-latest" not in config["rotation_lists"]:
-                config["rotation_lists"]["gemini-flash-lite-latest"] = target_lite_list
-                needs_upgrade = True
-            else:
-                current_lite_list = config["rotation_lists"]["gemini-flash-lite-latest"]
-                for model in target_lite_list:
-                    if model not in current_lite_list:
-                        current_lite_list.append(model)
-                        needs_upgrade = True
-
             if "enable_model_rotation" not in config:
                 config["enable_model_rotation"] = False
                 needs_upgrade = True
@@ -114,7 +69,7 @@ def load_rotation_config() -> dict:
                 needs_upgrade = True
 
             if "force_model" not in config:
-                config["force_model"] = FORCE_MODEL
+                config["force_model"] = {}
                 needs_upgrade = True
 
             if "save_chat_logs" not in config:
@@ -165,13 +120,10 @@ def load_rotation_config() -> dict:
         "last_fallback_switch_time": 0.0,
         "model_cooldowns": {},
         "consecutive_model_failures": {},
-        "rotation_lists": {
-            "gemini-3.6-flash": target_gemini_35_list,
-            "gemini-flash-lite-latest": target_lite_list,
-        },
+        "rotation_lists": {},
         "enable_model_rotation": False,
         "use_kaggle": False,
-        "force_model": {"gemini-3.6-flash": "auto", "gemini-flash-lite-latest": "auto"},
+        "force_model": {},
         "save_chat_logs": False,
         "filter_context": True,
         "vpn_switching_mode": "disabled",

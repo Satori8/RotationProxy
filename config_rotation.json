@@ -1,20 +1,131 @@
 {
   "last_fallback_switch_time": 1785442002.2997224,
+  "primary_model": "gemini-3.6-flash",
+  "fallback_model": "gemini-3-flash-preview",
   "model_cooldowns": {},
   "consecutive_model_failures": {
     "gemini-3.6-flash": 0,
     "minimax-3": 0,
     "gemini-flash-lite-latest": 0
   },
+  "thinking_models": [
+    "gemini-3.6-flash",
+    "gemini-3-flash",
+    "gemini-3-flash-preview",
+    "openrouter/owl-alpha",
+    "deepseek/deepseek-v4-flash:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "qwen/qwen3-coder:free",
+    "moonshotai/kimi-k2.6:free",
+    "deepseek/deepseek-r1:free"
+  ],
+  "quick_models": [
+    "gemini-flash-lite-latest",
+    "gemini-2.0-flash-lite",
+    "deepseek-v4-flash-free",
+    "mimo-v2.5-free",
+    "nemotron-3-super-free",
+    "google/gemini-2.5-flash:free",
+    "google/gemma-2-9b-it:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
+    "qwen/qwen-2.5-coder-32b-instruct:free"
+  ],
+  "model_settings": {
+    "gemini-3.6-flash": {
+      "provider": "gemini",
+      "base_url": "https://generativelanguage.googleapis.com",
+      "keys_pool": "API_KEYS",
+      "target_model": "gemini-3.6-flash"
+    },
+    "gemini-3-flash": {
+      "provider": "gemini",
+      "base_url": "https://generativelanguage.googleapis.com",
+      "keys_pool": "API_KEYS",
+      "target_model": "gemini-3-flash"
+    },
+    "gemini-3-flash-preview": {
+      "provider": "gemini",
+      "base_url": "https://generativelanguage.googleapis.com",
+      "keys_pool": "API_KEYS",
+      "target_model": "gemini-3-flash-preview"
+    },
+    "openrouter/owl-alpha": {
+      "provider": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "keys_pool": "OPENROUTER_KEYS",
+      "target_model": "openrouter/owl-alpha"
+    },
+    "deepseek-v4-flash": {
+      "provider": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "keys_pool": "OPENROUTER_KEYS",
+      "target_model": "deepseek-v4-flash"
+    },
+    "gemini-flash-lite-latest": {
+      "provider": "gemini",
+      "base_url": "https://generativelanguage.googleapis.com",
+      "keys_pool": "API_KEYS",
+      "target_model": "gemini-flash-lite-latest"
+    },
+    "deepseek-v4-flash-free": {
+      "provider": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "keys_pool": "OPENROUTER_KEYS",
+      "target_model": "deepseek-v4-flash-free"
+    },
+    "deepseek/deepseek-v4-flash:free": {
+      "provider": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "keys_pool": "OPENROUTER_KEYS",
+      "target_model": "deepseek/deepseek-v4-flash:free"
+    },
+    "mimo-v2.5-free": {
+      "provider": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "keys_pool": "OPENROUTER_KEYS",
+      "target_model": "mimo-v2.5-free"
+    },
+    "nemotron-3-super-free": {
+      "provider": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "keys_pool": "OPENROUTER_KEYS",
+      "target_model": "nemotron-3-super-free"
+    },
+    "deepseek/deepseek-r1:free": {
+      "provider": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "keys_pool": "OPENROUTER_KEYS",
+      "target_model": "deepseek/deepseek-r1:free"
+    },
+    "meta-llama/llama-3.3-70b-instruct:free": {
+      "provider": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "keys_pool": "OPENROUTER_KEYS",
+      "target_model": "meta-llama/llama-3.3-70b-instruct:free"
+    },
+    "qwen/qwen3-coder:free": {
+      "provider": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "keys_pool": "OPENROUTER_KEYS",
+      "target_model": "qwen/qwen3-coder:free"
+    },
+    "moonshotai/kimi-k2.6:free": {
+      "provider": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "keys_pool": "OPENROUTER_KEYS",
+      "target_model": "moonshotai/kimi-k2.6:free"
+    }
+  },
   "rotation_lists": {
     "gemini-3.6-flash": [
       "gemini-3.6-flash",
-      "gemini-3-flash-preview",
+      "gemini-3.5-flash",
       "openrouter/owl-alpha",
       "deepseek/deepseek-v4-flash:free",
       "meta-llama/llama-3.3-70b-instruct:free",
       "qwen/qwen3-coder:free",
-      "moonshotai/kimi-k2.6:free"
+      "moonshotai/kimi-k2.6:free",
+      "gemini-3-flash-preview"
     ],
     "gemini-flash-lite-latest": [
       "gemini-flash-lite-latest",

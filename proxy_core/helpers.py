@@ -46,27 +46,27 @@ def get_requested_model(path: str, body: bytes) -> str:
     # 1. Try to extract model from Gemini path (e.g., models/gemini-2.5-flash:generateContent)
     match = re.search(r"models/([^:/]+)", path)
     if match:
-        model_name = match.group(1)
-        if model_name == "gemini-2.0-flash-lite":
-            return "gemini-flash-lite-latest"
-        return model_name
+        return match.group(1)
 
-    # 2. Fall back to explicit path checks
-    if "gemini-flash-lite-latest" in path or "gemini-2.0-flash-lite" in path:
-        return "gemini-flash-lite-latest"
-    if "gemini-3-flash-preview" in path:
-        return "gemini-3-flash-preview"
-    if "gemini-3.6-flash" in path:
-        return "gemini-3.6-flash"
-
-    # 3. Try to extract from JSON body
+    # 2. Try to extract from JSON body
     try:
         data = json.loads(body)
         if isinstance(data, dict) and "model" in data:
             return data["model"]
     except Exception:
         pass
-    return "gemini-3.6-flash"
+
+    # 3. Fall back to primary model from rotation config
+    try:
+        from proxy_core.config import load_rotation_config
+        config = load_rotation_config()
+        primary = config.get("primary_model")
+        if primary:
+            return primary
+    except Exception:
+        pass
+
+    return ""
 
 
 def extract_chat_messages(body: bytes) -> list:
