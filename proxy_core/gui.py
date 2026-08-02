@@ -1278,50 +1278,69 @@ class ProxyGUI(ctk.CTk):
                     )
 
             elif provider == "Google":
-                url = "https://generativelanguage.googleapis.com/v1beta/models"
                 try:
                     from proxy_core.rotation import API_KEYS
                     from proxy_core.state import COOLDOWNS, LAST_USED
 
-                    headers = {"User-Agent": "Mozilla/5.0"}
-                    if API_KEYS:
-                        now = time.time()
-                        available_keys = [
-                            k for k in API_KEYS if COOLDOWNS.get(k, 0.0) < now
-                        ]
-                        if not available_keys:
-                            available_keys = API_KEYS
-                        available_keys = sorted(
-                            available_keys, key=lambda k: LAST_USED.get(k, 0.0)
-                        )
-                        api_key = available_keys[0]
-                        headers["x-goog-api-key"] = api_key
-                        headers["Authorization"] = f"Bearer {api_key}"
-                    req = urllib.request.Request(url, headers=headers)
-                    with urllib.request.urlopen(req, timeout=8.0) as response:
-                        raw_data = response.read().decode("utf-8")
-                        logger.info(
-                            f"[GUI] Google models response:\n{beautify_json_string(raw_data)}"
-                        )
-                        data = json.loads(raw_data)
-                        models = []
-                        for m in data.get("models", []):
-                            model_id = m.get("name", "")
-                            if model_id.startswith("models/"):
-                                model_id = model_id[7:]
-                            models.append(
-                                {
-                                    "id": model_id,
-                                    "name": m.get("displayName", model_id),
-                                    "context_length": m.get(
-                                        "inputTokenLimit", "unknown"
-                                    ),
-                                    "provider": "google",
-                                }
+                    if not API_KEYS:
+                        raise ValueError("No Google API keys configured.")
+
+                    now = time.time()
+                    available_keys = [
+                        k for k in API_KEYS if COOLDOWNS.get(k, 0.0) < now
+                    ]
+                    if not available_keys:
+                        available_keys = API_KEYS
+                    available_keys = sorted(
+                        available_keys, key=lambda k: LAST_USED.get(k, 0.0)
+                    )
+
+                    raw_data = None
+                    last_err = None
+                    for api_key in available_keys:
+                        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+                        headers = {
+                            "User-Agent": "Mozilla/5.0",
+                            "x-goog-api-key": api_key,
+                        }
+                        try:
+                            req = urllib.request.Request(url, headers=headers)
+                            with urllib.request.urlopen(req, timeout=8.0) as response:
+                                raw_data = response.read().decode("utf-8")
+                                LAST_USED[api_key] = time.time()
+                                break
+                        except Exception as err:
+                            last_err = err
+                            key_num = API_KEYS.index(api_key) + 1 if api_key in API_KEYS else 0
+                            logger.warning(
+                                f"[GUI] Fetch Google models failed with key [key#{key_num}]: {err}. Rotating key..."
                             )
-                        # Sort by id
-                        models = sorted(models, key=lambda x: x["id"])
-                        self.after(0, lambda: self.render_free_models(models))
+
+                    if raw_data is None:
+                        raise last_err or RuntimeError("Failed to fetch Google models with available keys.")
+
+                    logger.info(
+                        f"[GUI] Google models response:\n{beautify_json_string(raw_data)}"
+                    )
+                    data = json.loads(raw_data)
+                    models = []
+                    for m in data.get("models", []):
+                        model_id = m.get("name", "")
+                        if model_id.startswith("models/"):
+                            model_id = model_id[7:]
+                        models.append(
+                            {
+                                "id": model_id,
+                                "name": m.get("displayName", model_id),
+                                "context_length": m.get(
+                                    "inputTokenLimit", "unknown"
+                                ),
+                                "provider": "google",
+                            }
+                        )
+                    # Sort by id
+                    models = sorted(models, key=lambda x: x["id"])
+                    self.after(0, lambda: self.render_free_models(models))
                 except Exception as e:
                     logger.error(f"[GUI] Failed to fetch Google models: {e}")
                     self.after(
