@@ -1816,13 +1816,50 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         logger.error(
                             f"[{provider_name}] [vpn#{actual_vpn_index}] Key #{key_index} 403 ({candidate_model}) on {request.method} {target_url}. Error: {format_error_message(resp_text)}. Cooldown 12h [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                         )
+
+                        # VPN Integration: Track consecutive 403 errors
+                        VPN_CONSECUTIVE_ERRORS += 1
+                        rotation_config = load_rotation_config()
+                        vpn_mode = rotation_config.get("vpn_switching_mode", "disabled")
+                        vpn_threshold = int(
+                            rotation_config.get("vpn_errors_threshold", 5)
+                        )
+                        if (
+                            VPN_ANY_TUNNEL_ACTIVE
+                            and vpn_mode == "error_threshold"
+                            and VPN_CONSECUTIVE_ERRORS >= vpn_threshold
+                        ):
+                            logger.warning(
+                                f"[VPN] 403 Error threshold reached ({VPN_CONSECUTIVE_ERRORS}/{vpn_threshold}). Rotating VPN immediately..."
+                            )
+                            await rotate_vpn_on_the_fly("403 error threshold")
+                            VPN_CONSECUTIVE_ERRORS = 0
                         continue
                     elif response.status_code == 401:
+                        mark_cooldown(api_key, duration=43200.0)
                         error_msg = f"HTTP 401 Unauthorized: {resp_text}"
                         log_non_429_error(candidate_model, api_key, error_msg)
                         logger.warning(
                             f"[{provider_name}] [vpn#{actual_vpn_index}] Key #{key_index} 401 ({candidate_model}) on {request.method} {target_url}. Error: {format_error_message(resp_text)} [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                         )
+
+                        # VPN Integration: Track consecutive 401 errors
+                        VPN_CONSECUTIVE_ERRORS += 1
+                        rotation_config = load_rotation_config()
+                        vpn_mode = rotation_config.get("vpn_switching_mode", "disabled")
+                        vpn_threshold = int(
+                            rotation_config.get("vpn_errors_threshold", 5)
+                        )
+                        if (
+                            VPN_ANY_TUNNEL_ACTIVE
+                            and vpn_mode == "error_threshold"
+                            and VPN_CONSECUTIVE_ERRORS >= vpn_threshold
+                        ):
+                            logger.warning(
+                                f"[VPN] 401 Error threshold reached ({VPN_CONSECUTIVE_ERRORS}/{vpn_threshold}). Rotating VPN immediately..."
+                            )
+                            await rotate_vpn_on_the_fly("401 error threshold")
+                            VPN_CONSECUTIVE_ERRORS = 0
                         continue
                     elif response.status_code == 503:
                         mark_cooldown(api_key, duration=10.0)
@@ -1880,6 +1917,26 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         logger.error(
                             f"[{provider_name}] [vpn#{actual_vpn_index}] Key #{key_index} HTTP {response.status_code} ({candidate_model}) on {request.method} {target_url}. Error: {format_error_message(resp_text)} [Proxy Latency: {internal_latency_ms}ms] [Upstream Latency: {upstream_latency_ms}ms]"
                         )
+
+                        # VPN Integration: Track consecutive 500/502 errors
+                        VPN_CONSECUTIVE_ERRORS += 1
+                        rotation_config = load_rotation_config()
+                        vpn_mode = rotation_config.get("vpn_switching_mode", "disabled")
+                        vpn_threshold = int(
+                            rotation_config.get("vpn_errors_threshold", 5)
+                        )
+                        if (
+                            VPN_ANY_TUNNEL_ACTIVE
+                            and vpn_mode == "error_threshold"
+                            and VPN_CONSECUTIVE_ERRORS >= vpn_threshold
+                        ):
+                            logger.warning(
+                                f"[VPN] {response.status_code} Error threshold reached ({VPN_CONSECUTIVE_ERRORS}/{vpn_threshold}). Rotating VPN immediately..."
+                            )
+                            await rotate_vpn_on_the_fly(
+                                f"{response.status_code} error threshold"
+                            )
+                            VPN_CONSECUTIVE_ERRORS = 0
                         continue
                     else:
                         error_msg = f"HTTP {response.status_code} Unexpected Status: {resp_text}"
