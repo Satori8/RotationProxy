@@ -637,8 +637,11 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
     elif provider_name == "google":
         base_url = "https://generativelanguage.googleapis.com/v1beta"
         keys_pool = API_KEYS
+    elif provider_name == "kaggle":
+        base_url = KAGGLE_BASE_URL
+        keys_pool = ["test"]
     else:
-        base_url = "https://generativelanguage.googleapis.com"
+        base_url = "https://generativelanguage.googleapis.com/v1beta"
         keys_pool = API_KEYS
 
     if not keys_pool:
@@ -1102,7 +1105,9 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 logger.info(
                     f"Dynamically registered OpenCode Zen settings for model '{candidate_model}' with target model '{target_model}'"
                 )
-            elif candidate_model.startswith("google/"):
+            elif candidate_model.startswith("google/") and not candidate_model.endswith(
+                ":free"
+            ):
                 target_model = candidate_model[7:]
                 MODEL_SETTINGS[candidate_model] = {
                     "provider": "gemini",
@@ -1129,6 +1134,28 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 }
                 logger.info(
                     f"Dynamically registered Ollama Cloud settings for model '{candidate_model}' with target model '{target_model}'"
+                )
+            elif candidate_model.startswith("mistral/"):
+                target_model = candidate_model[8:]
+                MODEL_SETTINGS[candidate_model] = {
+                    "provider": "mistral",
+                    "base_url": "https://api.mistral.ai/v1",
+                    "keys_pool": MISTRAL_KEYS,
+                    "target_model": target_model,
+                }
+                logger.info(
+                    f"Dynamically registered Mistral settings for model '{candidate_model}' with target model '{target_model}'"
+                )
+            elif candidate_model.startswith("llm7/"):
+                target_model = candidate_model[5:]
+                MODEL_SETTINGS[candidate_model] = {
+                    "provider": "llm7",
+                    "base_url": "https://api.llm7.io/v1",
+                    "keys_pool": LLM7_KEYS,
+                    "target_model": target_model,
+                }
+                logger.info(
+                    f"Dynamically registered LLM7 settings for model '{candidate_model}' with target model '{target_model}'"
                 )
             elif (
                 path.startswith("openrouter/")
@@ -1193,32 +1220,56 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 "target_model": candidate_model,
             }
         elif explicit_provider == "mistral":
+            target_model = (
+                candidate_model[8:]
+                if candidate_model.startswith("mistral/")
+                else candidate_model
+            )
             model_settings = {
                 "provider": "mistral",
                 "base_url": "https://api.mistral.ai/v1",
                 "keys_pool": MISTRAL_KEYS,
-                "target_model": candidate_model,
+                "target_model": target_model,
             }
         elif explicit_provider == "llm7":
+            target_model = (
+                candidate_model[5:]
+                if candidate_model.startswith("llm7/")
+                else candidate_model
+            )
             model_settings = {
                 "provider": "llm7",
                 "base_url": "https://api.llm7.io/v1",
                 "keys_pool": LLM7_KEYS,
-                "target_model": candidate_model,
+                "target_model": target_model,
             }
         elif explicit_provider == "ollama_cloud":
+            target_model = (
+                candidate_model[13:]
+                if candidate_model.startswith("ollama_cloud/")
+                else candidate_model[7:]
+                if candidate_model.startswith("ollama/")
+                else candidate_model
+            )
             model_settings = {
                 "provider": "ollama_cloud",
                 "base_url": "https://ollama.com/v1",
                 "keys_pool": OLLAMA_CLOUD_KEYS,
-                "target_model": candidate_model,
+                "target_model": target_model,
             }
         elif explicit_provider == "opencode_zen":
+            target_model = (
+                candidate_model[13:]
+                if candidate_model.startswith("opencode_zen/")
+                else candidate_model[9:]
+                if candidate_model.startswith("opencode/")
+                else candidate_model
+            )
             model_settings = {
                 "provider": "opencode_zen",
                 "base_url": "https://opencode.ai/zen/v1",
                 "keys_pool": OPENCODE_KEYS,
-                "target_model": candidate_model,
+                "target_model": target_model,
             }
         elif explicit_provider == "google":
             model_settings = {
@@ -1378,6 +1429,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 "llm7",
                 "ollama_cloud",
                 "opencode_zen",
+                "kaggle",
             ):
                 headers["authorization"] = f"Bearer {api_key}"
             else:
@@ -1390,6 +1442,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 "llm7",
                 "ollama_cloud",
                 "opencode_zen",
+                "kaggle",
             ):
                 try:
                     body_dict = json.loads(body)

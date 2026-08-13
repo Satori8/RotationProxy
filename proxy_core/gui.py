@@ -1145,7 +1145,7 @@ class ProxyGUI(ctk.CTk):
                                     "id": m.get("id"),
                                     "name": m.get("id"),
                                     "context_length": "unknown",
-                                    "provider": "ollama",
+                                    "provider": "ollama_cloud",
                                 }
                             )
                         # Sort by id
@@ -1743,6 +1743,7 @@ class ProxyGUI(ctk.CTk):
                 "ollama_cloud",
                 "opencode_zen",
                 "opencode",
+                "google",
             ]:
                 if model_id.startswith(f"{p}/"):
                     provider = p
@@ -1757,6 +1758,9 @@ class ProxyGUI(ctk.CTk):
             # OpenCode Zen is the canonical provider for both opencode_zen/ and opencode/ prefixes
             if provider == "opencode":
                 provider = "opencode_zen"
+            # Ollama rotation entries route through the cloud provider
+            if provider == "ollama":
+                provider = "ollama_cloud"
 
             test_cb = lambda m=clean_model_id, b=badge, p=provider: (
                 self.on_test_individual_model(m, b, p)
