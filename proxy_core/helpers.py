@@ -112,31 +112,37 @@ def extract_text_from_chunk(chunk_str: str, provider: str) -> str:
             continue
         try:
             data = json.loads(line)
-            if provider == "gemini":
+            if provider == "gemini" or "candidates" in data:
                 candidates = data.get("candidates", [])
                 if candidates:
                     content = candidates[0].get("content", {})
                     parts = content.get("parts", [])
-                    if parts:
-                        text = parts[0].get("text", "")
-                        if text:
-                            extracted_texts.append(text)
+                    for p in parts:
+                        if isinstance(p, dict):
+                            if "text" in p and p["text"]:
+                                extracted_texts.append(p["text"])
+                            elif "functionCall" in p or "function_call" in p:
+                                fc = p.get("functionCall") or p.get("function_call")
+                                if isinstance(fc, dict):
+                                    extracted_texts.append(f"\n[Tool Call: {fc.get('name')}]\n")
             else:
                 choices = data.get("choices", [])
                 if choices:
-                    delta = choices[0].get("delta", {})
-                    if "content" in delta:
-                        content = delta["content"]
-                        if content:
-                            extracted_texts.append(content)
-                    elif "message" in delta:
-                        content = delta["message"].get("content", "")
-                        if content:
-                            extracted_texts.append(content)
-                    elif "message" in choices[0]:
-                        content = choices[0]["message"].get("content", "")
-                        if content:
-                            extracted_texts.append(content)
+                    delta = choices[0].get("delta") or choices[0].get("message") or {}
+                    if "content" in delta and delta["content"]:
+                        extracted_texts.append(delta["content"])
+                    elif "reasoning_content" in delta and delta["reasoning_content"]:
+                        extracted_texts.append(delta["reasoning_content"])
+                    elif "reasoning" in delta and delta["reasoning"]:
+                        extracted_texts.append(delta["reasoning"])
+                    elif "thought" in delta and delta["thought"]:
+                        extracted_texts.append(delta["thought"])
+                    elif "tool_calls" in delta and delta["tool_calls"]:
+                        for tc in delta["tool_calls"]:
+                            if isinstance(tc, dict):
+                                fn = tc.get("function", {})
+                                if isinstance(fn, dict) and fn.get("name"):
+                                    extracted_texts.append(f"\n[Tool Call: {fn.get('name')}]\n")
         except Exception:
             pass
     return "".join(extracted_texts)
@@ -284,6 +290,20 @@ async def write_chat_log(
         logger.error(f"Failed to write chat log: {e}")
 
 
+def sanitize_schema(schema):
+    if isinstance(schema, dict):
+        new_s = {}
+        for k, v in schema.items():
+            if k == "type" and isinstance(v, str):
+                new_s[k] = v.lower()
+            else:
+                new_s[k] = sanitize_schema(v)
+        return new_s
+    elif isinstance(schema, list):
+        return [sanitize_schema(item) for item in schema]
+    return schema
+
+
 def translate_payload_to_openai(gemini_payload: dict, target_model: str) -> dict:
     is_mistral_medium = "mistral-medium" in target_model.lower()
 
@@ -291,6 +311,9 @@ def translate_payload_to_openai(gemini_payload: dict, target_model: str) -> dict
         # Already in OpenAI format, just update the model to target_model
         new_payload = dict(gemini_payload)
         new_payload["model"] = target_model
+
+        if "tools" in new_payload and isinstance(new_payload["tools"], list):
+            new_payload["tools"] = sanitize_schema(new_payload["tools"])
 
         if is_mistral_medium:
             # Inject loop mitigation parameters
@@ -306,18 +329,118 @@ def translate_payload_to_openai(gemini_payload: dict, target_model: str) -> dict
         return new_payload
 
     openai_payload = {"model": target_model, "messages": []}
-    if "contents" in gemini_payload:
-        for content in gemini_payload["contents"]:
-            role = content.get("role", "user")
-            if role == "model":
-                role = "assistant"
-            parts = content.get("parts", [])
-            text = " ".join(
+
+    # Translate systemInstruction / system_instruction
+    sys_inst = gemini_payload.get("systemInstruction") or gemini_payload.get("system_instruction")
+    if sys_inst and isinstance(sys_inst, dict):
+        parts = sys_inst.get("parts", [])
+        if isinstance(parts, list):
+            sys_text = "\n".join(
                 p.get("text", "") for p in parts if isinstance(p, dict) and "text" in p
             )
-            openai_payload["messages"].append({"role": role, "content": text})
-    if "generationConfig" in gemini_payload:
-        gc = gemini_payload["generationConfig"]
+            if sys_text:
+                openai_payload["messages"].append({"role": "system", "content": sys_text})
+
+    # Translate contents
+    if "contents" in gemini_payload and isinstance(gemini_payload["contents"], list):
+        for content in gemini_payload["contents"]:
+            if not isinstance(content, dict):
+                continue
+            role = content.get("role", "user")
+            if role in ("model", "assistant"):
+                role = "assistant"
+
+            parts = content.get("parts", [])
+            text_parts = []
+            tool_calls = []
+            tool_responses = []
+
+            if isinstance(parts, list):
+                for p in parts:
+                    if not isinstance(p, dict):
+                        continue
+                    if "text" in p and p["text"]:
+                        text_parts.append(p["text"])
+                    if "functionCall" in p or "function_call" in p:
+                        fc = p.get("functionCall") or p.get("function_call")
+                        if isinstance(fc, dict):
+                            fn_name = fc.get("name", "")
+                            args = fc.get("args", {})
+                            args_str = (
+                                json.dumps(args, ensure_ascii=False)
+                                if isinstance(args, (dict, list))
+                                else str(args)
+                            )
+                            call_id = fc.get("id") or f"call_{fn_name}_{len(tool_calls)+1}"
+                            tool_calls.append(
+                                {
+                                    "id": call_id,
+                                    "type": "function",
+                                    "function": {"name": fn_name, "arguments": args_str},
+                                }
+                            )
+                    if "functionResponse" in p or "function_response" in p:
+                        fr = p.get("functionResponse") or p.get("function_response")
+                        if isinstance(fr, dict):
+                            fn_name = fr.get("name", "")
+                            resp = fr.get("response", {})
+                            resp_str = (
+                                json.dumps(resp, ensure_ascii=False)
+                                if isinstance(resp, (dict, list))
+                                else str(resp)
+                            )
+                            call_id = fr.get("id") or f"call_{fn_name}"
+                            tool_responses.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": call_id,
+                                    "name": fn_name,
+                                    "content": resp_str,
+                                }
+                            )
+
+            if tool_responses:
+                for tr in tool_responses:
+                    openai_payload["messages"].append(tr)
+            else:
+                content_text = "\n".join(text_parts) if text_parts else ""
+                msg = {"role": role}
+                if content_text or not tool_calls:
+                    msg["content"] = content_text
+                else:
+                    msg["content"] = None
+                if tool_calls:
+                    msg["tool_calls"] = tool_calls
+                openai_payload["messages"].append(msg)
+
+    # Translate tools
+    tools = gemini_payload.get("tools")
+    if tools and isinstance(tools, list):
+        openai_tools = []
+        for tg in tools:
+            if not isinstance(tg, dict):
+                continue
+            fds = tg.get("functionDeclarations") or tg.get("function_declarations") or []
+            if isinstance(fds, list):
+                for fd in fds:
+                    if isinstance(fd, dict):
+                        params = sanitize_schema(fd.get("parameters", {}))
+                        openai_tools.append(
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": fd.get("name", ""),
+                                    "description": fd.get("description", ""),
+                                    "parameters": params,
+                                },
+                            }
+                        )
+        if openai_tools:
+            openai_payload["tools"] = openai_tools
+
+    # Translate generationConfig
+    gc = gemini_payload.get("generationConfig") or gemini_payload.get("generation_config") or {}
+    if isinstance(gc, dict):
         if "temperature" in gc:
             openai_payload["temperature"] = gc["temperature"]
         if "maxOutputTokens" in gc:
@@ -338,42 +461,113 @@ def translate_payload_to_openai(gemini_payload: dict, target_model: str) -> dict
     return openai_payload
 
 
-def translate_openai_chunk_to_gemini(openai_chunk_str: str) -> str:
-    """Translate an OpenAI SSE chunk to a Gemini SSE chunk."""
-    if openai_chunk_str.startswith("data:"):
-        data_content = openai_chunk_str[5:].strip()
-        if data_content == "[DONE]":
-            return "data: [DONE]"
-        try:
-            openai_data = json.loads(data_content)
-            choices = openai_data.get("choices", [])
-            if choices:
-                delta = choices[0].get("delta", {})
-                content = delta.get("content", "")
+def translate_openai_chunk_to_gemini(
+    openai_chunk_str: str, tool_call_acc: dict | None = None
+) -> str:
+    """Translate an OpenAI SSE chunk or raw JSON to a Gemini SSE chunk."""
+    raw_json = openai_chunk_str.strip()
+    if raw_json.startswith("data:"):
+        raw_json = raw_json[5:].strip()
 
-                openai_finish_reason = choices[0].get("finish_reason")
-                gemini_finish_reason = None
-                if openai_finish_reason == "stop":
-                    gemini_finish_reason = "STOP"
-                elif openai_finish_reason == "length":
-                    gemini_finish_reason = "MAX_TOKENS"
-                elif openai_finish_reason is not None:
-                    gemini_finish_reason = str(openai_finish_reason).upper()
+    if raw_json == "[DONE]":
+        return "data: [DONE]"
 
-                gemini_data = {
-                    "candidates": [
-                        {
-                            "content": {"parts": [{"text": content}], "role": "model"},
-                            "index": 0,
-                        }
-                    ]
-                }
-                if gemini_finish_reason:
-                    gemini_data["candidates"][0]["finishReason"] = gemini_finish_reason
+    if not raw_json or not raw_json.startswith("{"):
+        return openai_chunk_str
 
-                return f"data: {json.dumps(gemini_data)}"
-        except Exception:
-            pass
+    try:
+        openai_data = json.loads(raw_json)
+        choices = openai_data.get("choices", [])
+        if not choices:
+            return openai_chunk_str
+
+        choice = choices[0]
+        delta = choice.get("delta") or choice.get("message") or {}
+        openai_finish_reason = choice.get("finish_reason")
+
+        content = delta.get("content") or ""
+        reasoning = (
+            delta.get("reasoning_content")
+            or delta.get("reasoning")
+            or delta.get("thought")
+            or ""
+        )
+
+        parts = []
+        if reasoning:
+            parts.append({"text": reasoning})
+        if content:
+            parts.append({"text": content})
+
+        # Process tool calls
+        tool_calls = delta.get("tool_calls") or choice.get("tool_calls") or []
+        if tool_calls:
+            for tc in tool_calls:
+                if not isinstance(tc, dict):
+                    continue
+                fn = tc.get("function", {})
+                if not isinstance(fn, dict):
+                    continue
+                fn_name = fn.get("name", "")
+                fn_args = fn.get("arguments", "")
+
+                if tool_call_acc is not None:
+                    if fn_name:
+                        tool_call_acc["name"] = fn_name
+                    if fn_args:
+                        tool_call_acc["args_str"] += fn_args
+                else:
+                    args_dict = {}
+                    if isinstance(fn_args, dict):
+                        args_dict = fn_args
+                    elif isinstance(fn_args, str) and fn_args.strip():
+                        try:
+                            args_dict = json.loads(fn_args)
+                        except Exception:
+                            args_dict = {"raw": fn_args}
+                    parts.append({"functionCall": {"name": fn_name, "args": args_dict}})
+
+        # If finish_reason is tool_calls and tool_call_acc has accumulated data
+        if (
+            openai_finish_reason in ("tool_calls", "function_call")
+            and tool_call_acc
+            and tool_call_acc.get("name")
+        ):
+            acc_name = tool_call_acc["name"]
+            acc_args_str = tool_call_acc["args_str"]
+            try:
+                acc_args = json.loads(acc_args_str) if acc_args_str else {}
+            except Exception:
+                acc_args = {"raw": acc_args_str}
+            parts.append({"functionCall": {"name": acc_name, "args": acc_args}})
+            tool_call_acc["name"] = ""
+            tool_call_acc["args_str"] = ""
+
+        gemini_finish_reason = None
+        if openai_finish_reason in ("tool_calls", "function_call"):
+            gemini_finish_reason = "TOOL_CALLS"
+        elif openai_finish_reason == "stop":
+            gemini_finish_reason = "STOP"
+        elif openai_finish_reason == "length":
+            gemini_finish_reason = "MAX_TOKENS"
+        elif openai_finish_reason is not None:
+            gemini_finish_reason = str(openai_finish_reason).upper()
+
+        if not parts and not gemini_finish_reason:
+            return ""
+
+        candidate = {
+            "content": {"parts": parts if parts else [{"text": ""}], "role": "model"},
+            "index": 0,
+        }
+        if gemini_finish_reason:
+            candidate["finishReason"] = gemini_finish_reason
+
+        gemini_data = {"candidates": [candidate]}
+        return f"data: {json.dumps(gemini_data, ensure_ascii=False)}"
+    except Exception:
+        pass
+
     return openai_chunk_str
 
 

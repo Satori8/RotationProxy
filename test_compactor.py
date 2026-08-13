@@ -516,6 +516,139 @@ def test_google_model_routing():
     assert MODEL_SETTINGS[candidate_model]["target_model"] == "gemini-1.5-flash"
 
 
+
+def test_translate_payload_to_openai():
+    print("Testing translate_payload_to_openai...")
+    from proxy_core.helpers import translate_payload_to_openai
+
+    gemini_payload = {
+        "systemInstruction": {
+            "parts": [{"text": "You are a coding assistant."}]
+        },
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": "Run list_dir tool"}]
+            },
+            {
+                "role": "model",
+                "parts": [
+                    {
+                        "functionCall": {
+                            "name": "list_dir",
+                            "args": {"path": "."}
+                        }
+                    }
+                ]
+            },
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "name": "list_dir",
+                            "response": {"files": ["a.txt", "b.txt"]}
+                        }
+                    }
+                ]
+            }
+        ],
+        "tools": [
+            {
+                "functionDeclarations": [
+                    {
+                        "name": "list_dir",
+                        "description": "List directory contents",
+                        "parameters": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "path": {"type": "STRING", "description": "Dir path"}
+                            },
+                            "required": ["path"]
+                        }
+                    }
+                ]
+            }
+        ],
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1000}
+    }
+
+    translated = translate_payload_to_openai(gemini_payload, "minimax_m3")
+
+    assert translated["model"] == "minimax_m3"
+    assert translated["temperature"] == 0.2
+    assert translated["max_tokens"] == 1000
+
+    # System instruction
+    assert translated["messages"][0]["role"] == "system"
+    assert "coding assistant" in translated["messages"][0]["content"]
+
+    # First user message
+    assert translated["messages"][1]["role"] == "user"
+    assert "Run list_dir tool" in translated["messages"][1]["content"]
+
+    # Assistant message with tool_calls
+    assert translated["messages"][2]["role"] == "assistant"
+    assert "tool_calls" in translated["messages"][2]
+    assert translated["messages"][2]["tool_calls"][0]["function"]["name"] == "list_dir"
+    assert '"path": "."' in translated["messages"][2]["tool_calls"][0]["function"]["arguments"]
+
+    # Tool response
+    assert translated["messages"][3]["role"] == "tool"
+    assert translated["messages"][3]["name"] == "list_dir"
+    assert "a.txt" in translated["messages"][3]["content"]
+
+    # Tools declaration sanitized type lowercase
+    assert "tools" in translated
+    fn_decl = translated["tools"][0]["function"]
+    assert fn_decl["name"] == "list_dir"
+    assert fn_decl["parameters"]["type"] == "object"
+    assert fn_decl["parameters"]["properties"]["path"]["type"] == "string"
+
+    print("  -> translate_payload_to_openai passed!")
+
+
+def test_translate_openai_chunk_to_gemini():
+    print("Testing translate_openai_chunk_to_gemini...")
+    from proxy_core.helpers import translate_openai_chunk_to_gemini
+
+    # 1. Reasoning chunk (GLM-5 / Minimax M3 / DeepSeek)
+    openai_chunk_reasoning = 'data: {"choices": [{"delta": {"reasoning_content": "Analyzing request..."}}]}'
+    res1 = translate_openai_chunk_to_gemini(openai_chunk_reasoning)
+    assert "Analyzing request..." in res1
+    assert "candidates" in res1
+
+    # 2. Text chunk
+    openai_chunk_text = 'data: {"choices": [{"delta": {"content": "Hello world"}}]}'
+    res2 = translate_openai_chunk_to_gemini(openai_chunk_text)
+    assert "Hello world" in res2
+
+    # 3. Tool call chunk streaming accumulation
+    acc = {"name": "", "args_str": ""}
+    tc_chunk1 = 'data: {"choices": [{"delta": {"tool_calls": [{"function": {"name": "read_files", "arguments": "{\\"path\\": "}}]}}]}'
+    tc_chunk2 = 'data: {"choices": [{"delta": {"tool_calls": [{"function": {"arguments": "\\"main.py\\"}"}}]}}]}'
+    tc_chunk_end = 'data: {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}'
+
+    res3a = translate_openai_chunk_to_gemini(tc_chunk1, acc)
+    assert acc["name"] == "read_files"
+    assert acc["args_str"] == '{"path": '
+
+    res3b = translate_openai_chunk_to_gemini(tc_chunk2, acc)
+    assert acc["args_str"] == '{"path": "main.py"}'
+
+    res3c = translate_openai_chunk_to_gemini(tc_chunk_end, acc)
+    assert "functionCall" in res3c
+    assert "read_files" in res3c
+    assert "main.py" in res3c
+    assert "TOOL_CALLS" in res3c
+    assert acc["name"] == ""
+
+    # 4. Done chunk
+    assert translate_openai_chunk_to_gemini("data: [DONE]") == "data: [DONE]"
+
+    print("  -> translate_openai_chunk_to_gemini passed!")
+
+
 if __name__ == "__main__":
     print("=== RUNNING COMPACTOR TESTS ===")
     try:
@@ -534,6 +667,8 @@ if __name__ == "__main__":
         test_find_builtins_node()
         test_403_error_logging_only_by_key()
         test_google_model_routing()
+        test_translate_payload_to_openai()
+        test_translate_openai_chunk_to_gemini()
         print("\n=== ALL TESTS PASSED SUCCESSFULLY! ===\n")
         sys.exit(0)
     except AssertionError as e:
