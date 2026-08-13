@@ -1419,6 +1419,12 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     if vpn_mode == "every_request":
                         await rotate_vpn_on_the_fly("every_request mode trigger")
 
+                    # Advance the parallel round-robin per attempt so retries rotate tunnels
+                    if parallelism_enabled:
+                        REQUEST_COUNT += 1
+                        slot_idx = REQUEST_COUNT % len(ACTIVE_SLOTS)
+                        current_vpn_index = ACTIVE_SLOTS[slot_idx]
+
                     # Pick the appropriate client (either default, static, or active rotating index)
                     client = get_active_vpn_client(
                         request, vpn_mode, vpn_static, current_vpn_index
