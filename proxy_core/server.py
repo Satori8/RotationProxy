@@ -1587,6 +1587,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                     raise
 
                             async def iter_translated_chunks():
+                                translation_buffer = ""
                                 async for chunk in iter_bytes():
                                     chunk_str = ""
                                     try:
@@ -1610,22 +1611,24 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
                                     if needs_gemini_response_translation and chunk_str:
                                         try:
-                                            translated_lines = []
-                                            for line in chunk_str.split("\n"):
+                                            translation_buffer += chunk_str
+                                            # Split complete SSE lines out of the buffer; a line
+                                            # fragmented across TCP chunks is held until its "\n"
+                                            # arrives so it is translated as one unit.
+                                            while "\n" in translation_buffer:
+                                                line, translation_buffer = (
+                                                    translation_buffer.split("\n", 1)
+                                                )
                                                 line_stripped = line.strip()
                                                 if line_stripped:
                                                     translated_line = translate_openai_chunk_to_gemini(
                                                         line_stripped
                                                     )
-                                                    translated_lines.append(
-                                                        translated_line
+                                                    yield translated_line.encode(
+                                                        "utf-8"
                                                     )
                                                 else:
-                                                    translated_lines.append(line)
-                                            translated_chunk = "\n".join(
-                                                translated_lines
-                                            )
-                                            yield translated_chunk.encode("utf-8")
+                                                    yield b"\n"
                                         except Exception as te:
                                             logger.debug(
                                                 f"Failed to translate response chunk: {te}"
@@ -1633,6 +1636,26 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                             yield chunk
                                     else:
                                         yield chunk
+
+                                # Flush any line still buffered when the stream ends
+                                if (
+                                    needs_gemini_response_translation
+                                    and translation_buffer
+                                ):
+                                    line_stripped = translation_buffer.strip()
+                                    if line_stripped:
+                                        try:
+                                            translated_line = (
+                                                translate_openai_chunk_to_gemini(
+                                                    line_stripped
+                                                )
+                                            )
+                                            yield translated_line.encode("utf-8")
+                                        except Exception as te:
+                                            logger.debug(
+                                                f"Failed to translate trailing chunk: {te}"
+                                            )
+                                            yield translation_buffer.encode("utf-8")
 
                             async for trans_chunk in iter_translated_chunks():
                                 yield trans_chunk
