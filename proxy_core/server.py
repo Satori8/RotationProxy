@@ -676,7 +676,13 @@ async def test_model_endpoint(req: TestModelRequest, request: Request):
         headers["x-goog-api-key"] = api_key
 
     # Build payload
-    clean_model_id = model_id[7:] if model_id.startswith("google/") else model_id
+    clean_model_id = model_id
+    if model_id.startswith("google/"):
+        clean_model_id = model_id[7:]
+    elif model_id.startswith("opencode_zen/"):
+        clean_model_id = model_id[13:]
+    elif model_id.startswith("opencode/"):
+        clean_model_id = model_id[9:]
     test_body = {
         "model": clean_model_id,
         "messages": [{"role": "user", "content": "Hi"}],

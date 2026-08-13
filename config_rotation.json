@@ -47,6 +47,12 @@
       "keys_pool": "API_KEYS",
       "target_model": "gemini-3-flash-preview"
     },
+    "opencode_zen/deepseek-v4-flash-free": {
+      "provider": "opencode_zen",
+      "base_url": "https://opencode.ai/zen/v1",
+      "keys_pool": "OPENCODE_KEYS",
+      "target_model": "deepseek-v4-flash-free"
+    },
     "openrouter/owl-alpha": {
       "provider": "openrouter",
       "base_url": "https://openrouter.ai/api/v1",
