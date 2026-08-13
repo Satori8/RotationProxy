@@ -1741,6 +1741,8 @@ class ProxyGUI(ctk.CTk):
                 "mistral",
                 "gemini",
                 "ollama_cloud",
+                "opencode_zen",
+                "opencode",
             ]:
                 if model_id.startswith(f"{p}/"):
                     provider = p
@@ -1751,6 +1753,10 @@ class ProxyGUI(ctk.CTk):
                     provider = "openrouter"
                 elif model_id.startswith("llm7-") or model_id.startswith("qwen3-"):
                     provider = "llm7"
+
+            # OpenCode Zen is the canonical provider for both opencode_zen/ and opencode/ prefixes
+            if provider == "opencode":
+                provider = "opencode_zen"
 
             test_cb = lambda m=clean_model_id, b=badge, p=provider: (
                 self.on_test_individual_model(m, b, p)
