@@ -59,6 +59,7 @@ def get_requested_model(path: str, body: bytes) -> str:
     # 3. Fall back to primary model from rotation config
     try:
         from proxy_core.config import load_rotation_config
+
         config = load_rotation_config()
         primary = config.get("primary_model")
         if primary:
@@ -124,7 +125,9 @@ def extract_text_from_chunk(chunk_str: str, provider: str) -> str:
                             elif "functionCall" in p or "function_call" in p:
                                 fc = p.get("functionCall") or p.get("function_call")
                                 if isinstance(fc, dict):
-                                    extracted_texts.append(f"\n[Tool Call: {fc.get('name')}]\n")
+                                    extracted_texts.append(
+                                        f"\n[Tool Call: {fc.get('name')}]\n"
+                                    )
             else:
                 choices = data.get("choices", [])
                 if choices:
@@ -142,7 +145,9 @@ def extract_text_from_chunk(chunk_str: str, provider: str) -> str:
                             if isinstance(tc, dict):
                                 fn = tc.get("function", {})
                                 if isinstance(fn, dict) and fn.get("name"):
-                                    extracted_texts.append(f"\n[Tool Call: {fn.get('name')}]\n")
+                                    extracted_texts.append(
+                                        f"\n[Tool Call: {fn.get('name')}]\n"
+                                    )
         except Exception:
             pass
     return "".join(extracted_texts)
@@ -377,15 +382,21 @@ def translate_payload_to_openai(gemini_payload: dict, target_model: str) -> dict
     openai_payload = {"model": target_model, "messages": []}
 
     # Translate systemInstruction / system_instruction
-    sys_inst = gemini_payload.get("systemInstruction") or gemini_payload.get("system_instruction")
+    sys_inst = gemini_payload.get("systemInstruction") or gemini_payload.get(
+        "system_instruction"
+    )
     if sys_inst and isinstance(sys_inst, dict):
         parts = sys_inst.get("parts", [])
         if isinstance(parts, list):
             sys_text = "\n".join(
-                p.get("text", "") for p in parts if isinstance(p, dict) and "text" in p and p.get("text")
+                p.get("text", "")
+                for p in parts
+                if isinstance(p, dict) and "text" in p and p.get("text")
             )
             if sys_text:
-                openai_payload["messages"].append({"role": "system", "content": sys_text})
+                openai_payload["messages"].append(
+                    {"role": "system", "content": sys_text}
+                )
 
     # Track generated tool call IDs so functionResponse IDs match assistant tool_calls IDs exactly!
     pending_tool_call_ids = {}  # fn_name -> list of call_ids
@@ -422,13 +433,20 @@ def translate_payload_to_openai(gemini_payload: dict, target_model: str) -> dict
                                 else str(args)
                             )
                             tool_call_counter += 1
-                            call_id = fc.get("id") or f"call_{tool_call_counter}_{fn_name}"
-                            pending_tool_call_ids.setdefault(fn_name, []).append(call_id)
+                            call_id = (
+                                fc.get("id") or f"call_{tool_call_counter}_{fn_name}"
+                            )
+                            pending_tool_call_ids.setdefault(fn_name, []).append(
+                                call_id
+                            )
                             tool_calls.append(
                                 {
                                     "id": call_id,
                                     "type": "function",
-                                    "function": {"name": fn_name, "arguments": args_str},
+                                    "function": {
+                                        "name": fn_name,
+                                        "arguments": args_str,
+                                    },
                                 }
                             )
                     if "functionResponse" in p or "function_response" in p:
@@ -441,7 +459,10 @@ def translate_payload_to_openai(gemini_payload: dict, target_model: str) -> dict
                                 if isinstance(resp, (dict, list))
                                 else str(resp)
                             )
-                            if fn_name in pending_tool_call_ids and pending_tool_call_ids[fn_name]:
+                            if (
+                                fn_name in pending_tool_call_ids
+                                and pending_tool_call_ids[fn_name]
+                            ):
                                 call_id = pending_tool_call_ids[fn_name].pop(0)
                             else:
                                 call_id = fr.get("id") or f"call_{fn_name}"
@@ -458,7 +479,9 @@ def translate_payload_to_openai(gemini_payload: dict, target_model: str) -> dict
                 for tr in tool_responses:
                     openai_payload["messages"].append(tr)
                 if text_parts:
-                    openai_payload["messages"].append({"role": "user", "content": "\n".join(text_parts)})
+                    openai_payload["messages"].append(
+                        {"role": "user", "content": "\n".join(text_parts)}
+                    )
             else:
                 content_text = "\n".join(text_parts) if text_parts else ""
                 msg = {"role": role}
@@ -477,7 +500,9 @@ def translate_payload_to_openai(gemini_payload: dict, target_model: str) -> dict
         for tg in tools:
             if not isinstance(tg, dict):
                 continue
-            fds = tg.get("functionDeclarations") or tg.get("function_declarations") or []
+            fds = (
+                tg.get("functionDeclarations") or tg.get("function_declarations") or []
+            )
             if isinstance(fds, list):
                 for fd in fds:
                     if isinstance(fd, dict):
@@ -496,7 +521,11 @@ def translate_payload_to_openai(gemini_payload: dict, target_model: str) -> dict
             openai_payload["tools"] = openai_tools
 
     # Translate generationConfig
-    gc = gemini_payload.get("generationConfig") or gemini_payload.get("generation_config") or {}
+    gc = (
+        gemini_payload.get("generationConfig")
+        or gemini_payload.get("generation_config")
+        or {}
+    )
     if isinstance(gc, dict):
         if "temperature" in gc:
             openai_payload["temperature"] = gc["temperature"]
@@ -522,11 +551,11 @@ def translate_payload_to_openai(gemini_payload: dict, target_model: str) -> dict
     return openai_payload
 
 
-def flush_tool_calls_to_gemini(tool_call_acc: dict) -> str:
+def flush_tool_calls_to_gemini(tool_call_acc: dict) -> tuple[str, bool]:
     """Build a Gemini candidate chunk for any accumulated tool calls."""
     calls = tool_call_acc.get("calls", {})
     if not calls:
-        return ""
+        return ("", False)
 
     parts = []
     for idx in sorted(calls.keys()):
@@ -542,23 +571,23 @@ def flush_tool_calls_to_gemini(tool_call_acc: dict) -> str:
 
     calls.clear()
     if not parts:
-        return ""
+        return ("", False)
 
     gemini_data = {
         "candidates": [
             {
                 "content": {"parts": parts, "role": "model"},
-                "finishReason": "STOP",
+                "finishReason": "TOOL_CALLS",
                 "index": 0,
             }
         ]
     }
-    return f"data: {json.dumps(gemini_data, ensure_ascii=False)}"
+    return (f"data: {json.dumps(gemini_data, ensure_ascii=False)}", True)
 
 
 def translate_openai_chunk_to_gemini(
     openai_chunk_str: str, tool_call_acc: dict | None = None
-) -> str:
+) -> tuple[str, bool]:
     """Translate an OpenAI SSE chunk or raw JSON to a Gemini SSE chunk."""
     raw_json = openai_chunk_str.strip()
     if raw_json.startswith("data:"):
@@ -568,16 +597,16 @@ def translate_openai_chunk_to_gemini(
     if raw_json == "[DONE]":
         if tool_call_acc and tool_call_acc.get("calls"):
             return flush_tool_calls_to_gemini(tool_call_acc)
-        return ""
+        return ("", False)
 
     if not raw_json or not raw_json.startswith("{"):
-        return ""
+        return ("", False)
 
     try:
         openai_data = json.loads(raw_json)
         choices = openai_data.get("choices", [])
         if not choices:
-            return ""
+            return ("", False)
 
         choice = choices[0]
         delta = choice.get("delta") or choice.get("message") or {}
@@ -648,7 +677,9 @@ def translate_openai_chunk_to_gemini(
             calls.clear()
 
         gemini_finish_reason = None
-        if openai_finish_reason in ("tool_calls", "function_call", "stop"):
+        if openai_finish_reason in ("tool_calls", "function_call"):
+            gemini_finish_reason = "TOOL_CALLS"
+        elif openai_finish_reason == "stop":
             gemini_finish_reason = "STOP"
         elif openai_finish_reason == "length":
             gemini_finish_reason = "MAX_TOKENS"
@@ -656,21 +687,29 @@ def translate_openai_chunk_to_gemini(
             gemini_finish_reason = str(openai_finish_reason).upper()
 
         if not parts and not gemini_finish_reason:
-            return ""
+            return ("", False)
 
         candidate = {
             "content": {"parts": parts if parts else [{"text": ""}], "role": "model"},
             "index": 0,
         }
+        is_terminal = False
         if gemini_finish_reason:
             candidate["finishReason"] = gemini_finish_reason
+            is_terminal = True
+        else:
+            # CRITICAL: newer @ai-sdk/google treats a chunk without willContinue
+            # as the final chunk of the response. Intermediate chunks MUST carry
+            # willContinue: true so OpenCode keeps accumulating parts into ONE
+            # assistant message (prevents orphaned functionCall turns -> 400).
+            candidate["willContinue"] = True
 
         gemini_data = {"candidates": [candidate]}
-        return f"data: {json.dumps(gemini_data, ensure_ascii=False)}"
+        return (f"data: {json.dumps(gemini_data, ensure_ascii=False)}", is_terminal)
     except Exception:
         pass
 
-    return ""
+    return ("", False)
 
 
 def add_anomaly_to_state(model: str, msg: str):

@@ -1212,7 +1212,9 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     f"Dynamically registered Gemini settings for model '{candidate_model}'"
                 )
 
-        if candidate_model in MODEL_SETTINGS and (forced_model != "auto" or not explicit_provider):
+        if candidate_model in MODEL_SETTINGS and (
+            forced_model != "auto" or not explicit_provider
+        ):
             model_settings = MODEL_SETTINGS[candidate_model]
         elif explicit_provider == "openrouter":
             model_settings = {
@@ -1614,6 +1616,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                             async def iter_translated_chunks():
                                 translation_buffer = ""
                                 tool_call_acc = {"calls": {}}
+                                terminal_emitted = False
                                 async for chunk in iter_bytes():
                                     chunk_str = ""
                                     try:
@@ -1647,13 +1650,17 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                                 )
                                                 line_stripped = line.strip()
                                                 if line_stripped:
-                                                    translated_line = translate_openai_chunk_to_gemini(
-                                                        line_stripped, tool_call_acc
+                                                    translated_line, is_terminal = (
+                                                        translate_openai_chunk_to_gemini(
+                                                            line_stripped, tool_call_acc
+                                                        )
                                                     )
                                                     if translated_line:
                                                         yield f"{translated_line}\n\n".encode(
                                                             "utf-8"
                                                         )
+                                                        if is_terminal:
+                                                            terminal_emitted = True
                                         except Exception as te:
                                             logger.debug(
                                                 f"Failed to translate response chunk: {te}"
@@ -1670,13 +1677,17 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                     line_stripped = translation_buffer.strip()
                                     if line_stripped:
                                         try:
-                                            translated_line = (
+                                            translated_line, is_terminal = (
                                                 translate_openai_chunk_to_gemini(
                                                     line_stripped, tool_call_acc
                                                 )
                                             )
                                             if translated_line:
-                                                yield f"{translated_line}\n\n".encode("utf-8")
+                                                yield f"{translated_line}\n\n".encode(
+                                                    "utf-8"
+                                                )
+                                                if is_terminal:
+                                                    terminal_emitted = True
                                         except Exception as te:
                                             logger.debug(
                                                 f"Failed to translate trailing chunk: {te}"
@@ -1690,15 +1701,30 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                     and tool_call_acc.get("calls")
                                 ):
                                     try:
-                                        flushed = flush_tool_calls_to_gemini(
-                                            tool_call_acc
+                                        flushed, is_terminal = (
+                                            flush_tool_calls_to_gemini(tool_call_acc)
                                         )
                                         if flushed:
                                             yield f"{flushed}\n\n".encode("utf-8")
+                                            if is_terminal:
+                                                terminal_emitted = True
                                     except Exception as fe:
                                         logger.debug(
                                             f"Failed to flush tool calls at stream end: {fe}"
                                         )
+
+                                # If the upstream never sent a finish chunk (e.g. only [DONE]
+                                # or abrupt close), emit a terminal STOP chunk so the client
+                                # finalizes the turn instead of treating the stream as cut off.
+                                if (
+                                    needs_gemini_response_translation
+                                    and not terminal_emitted
+                                ):
+                                    terminal_chunk = (
+                                        'data: {"candidates":[{"content":{"parts":[{"text":""}],'
+                                        '"role":"model"},"index":0,"finishReason":"STOP"}]}'
+                                    )
+                                    yield f"{terminal_chunk}\n\n".encode("utf-8")
 
                             async for trans_chunk in iter_translated_chunks():
                                 yield trans_chunk
