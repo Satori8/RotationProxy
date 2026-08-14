@@ -304,6 +304,52 @@ def sanitize_schema(schema):
     return schema
 
 
+ALLOWED_GEMINI_OPENAI_KEYS = {
+    "model",
+    "messages",
+    "temperature",
+    "top_p",
+    "max_tokens",
+    "max_completion_tokens",
+    "stream",
+    "stop",
+    "presence_penalty",
+    "frequency_penalty",
+    "seed",
+    "tools",
+    "tool_choice",
+    "response_format",
+    "n",
+    "user",
+    "stream_options",
+    "logit_bias",
+    "logprobs",
+    "top_logprobs",
+    "parallel_tool_calls",
+    "function_call",
+    "functions",
+}
+
+
+def sanitize_openai_payload_for_gemini(payload: dict, target_model: str) -> dict:
+    """Sanitize OpenAI-format payload specifically for Google's /v1beta/chat/completions endpoint.
+    Google strictly rejects unknown JSON keys like promptCacheKey, separate_reasoning, thinking, options, etc.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    new_payload = {}
+    for k, v in payload.items():
+        if k in ALLOWED_GEMINI_OPENAI_KEYS:
+            new_payload[k] = v
+    clean_target = (
+        target_model[7:] if target_model.startswith("google/") else target_model
+    )
+    new_payload["model"] = clean_target
+    if "tools" in new_payload and isinstance(new_payload["tools"], list):
+        new_payload["tools"] = sanitize_schema(new_payload["tools"])
+    return new_payload
+
+
 def translate_payload_to_openai(gemini_payload: dict, target_model: str) -> dict:
     is_mistral_medium = "mistral-medium" in target_model.lower()
 

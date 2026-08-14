@@ -222,39 +222,25 @@ class ProxyGUI(ctk.CTk):
 
         ctk.CTkLabel(
             self.left_panel,
-            text="Thinking Domain Priority:",
+            text="Force Model (All Requests):",
             font=ctk.CTkFont(size=10, weight="bold"),
         ).pack(anchor="w", padx=10)
-        thinking_models = ["Auto (Rotation)"] + [
-            m for m in thinking_models_list if m != "Auto (Rotation)"
+        active_rotation_models = rotation_lists.get(primary_model, [])
+        if not active_rotation_models:
+            active_rotation_models = thinking_models_list
+        forced_models = ["Auto (Rotation)"] + [
+            m for m in active_rotation_models if m and m != "Auto (Rotation)"
         ]
         self.thinking_select = ctk.CTkOptionMenu(
-            self.left_panel, values=thinking_models, command=self.on_thinking_select
+            self.left_panel, values=forced_models, command=self.on_thinking_select
         )
         self.thinking_select.pack(fill="x", padx=10, pady=(2, 10))
-        thinking_val = config_force_model.get(primary_model, "auto")
-        if thinking_val == "auto":
+        self.force_select = self.thinking_select
+        forced_val = config_force_model.get("all") or config_force_model.get(primary_model, "auto")
+        if forced_val == "auto" or forced_val not in forced_models:
             self.thinking_select.set("Auto (Rotation)")
         else:
-            self.thinking_select.set(thinking_val)
-
-        ctk.CTkLabel(
-            self.left_panel,
-            text="Quick Domain Priority:",
-            font=ctk.CTkFont(size=10, weight="bold"),
-        ).pack(anchor="w", padx=10)
-        quick_models = ["Auto (Rotation)"] + [
-            m for m in quick_models_list if m != "Auto (Rotation)"
-        ]
-        self.quick_select = ctk.CTkOptionMenu(
-            self.left_panel, values=quick_models, command=self.on_quick_select
-        )
-        self.quick_select.pack(fill="x", padx=10, pady=(2, 10))
-        quick_val = config_force_model.get(quick_primary_model, "auto")
-        if quick_val == "auto":
-            self.quick_select.set("Auto (Rotation)")
-        else:
-            self.quick_select.set(quick_val)
+            self.thinking_select.set(forced_val)
 
         self.sep = ctk.CTkFrame(self.left_panel, height=2, fg_color="gray30")
         self.sep.pack(fill="x", padx=5, pady=5)
@@ -539,27 +525,16 @@ class ProxyGUI(ctk.CTk):
         self.right_manager_frame = ctk.CTkFrame(self.tab_manager, corner_radius=8)
         self.right_manager_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
         self.right_manager_frame.grid_columnconfigure(0, weight=1)
-        self.right_manager_frame.grid_rowconfigure(2, weight=1)
+        self.right_manager_frame.grid_rowconfigure(1, weight=1)
 
         ctk.CTkLabel(
             self.right_manager_frame,
             text="Active Rotation Configuration",
             font=ctk.CTkFont(size=14, weight="bold"),
-        ).grid(row=0, column=0, pady=(10, 2))
-
-        # Dropdown to select active domain rotation
-        self.domain_select = ctk.CTkOptionMenu(
-            self.right_manager_frame,
-            values=[
-                "Thinking Models (gemini-3.6-flash)",
-                "Quick Models (gemini-flash-lite-latest)",
-            ],
-            command=self.on_manager_domain_change,
-        )
-        self.domain_select.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+        ).grid(row=0, column=0, pady=(10, 5))
 
         self.rotation_scroll = ctk.CTkScrollableFrame(self.right_manager_frame)
-        self.rotation_scroll.grid(row=2, column=0, padx=10, pady=5, sticky="nsew")
+        self.rotation_scroll.grid(row=1, column=0, padx=10, pady=5, sticky="nsew")
         self.rotation_scroll.grid_columnconfigure(0, weight=1)
 
         self.save_rotation_btn = ctk.CTkButton(
@@ -569,7 +544,7 @@ class ProxyGUI(ctk.CTk):
             hover_color="#3498DB",
             command=self.on_save_active_rotation,
         )
-        self.save_rotation_btn.grid(row=3, column=0, padx=10, pady=10, sticky="ew")
+        self.save_rotation_btn.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
 
         # Load active rotation models on start
         self.active_domain_key = "gemini-3.6-flash"
@@ -765,33 +740,23 @@ class ProxyGUI(ctk.CTk):
     def on_thinking_select(self, val):
         config = load_rotation_config()
         primary_model = config.get("primary_model", "")
-        if "force_model" not in config:
+        if "force_model" not in config or not isinstance(config["force_model"], dict):
             config["force_model"] = {}
-        if val == "Auto (Rotation)":
+        if val in ("Auto (Rotation)", "auto", "Auto (No Forcing)"):
+            config["force_model"]["all"] = "auto"
             if primary_model:
                 config["force_model"][primary_model] = "auto"
-            logger.info("Thinking domain priority model reset to Auto.")
+            logger.info("General model forcing disabled (set to Auto).")
+            log_queue.put("[GUI] General model forcing disabled (Auto).")
         else:
+            config["force_model"]["all"] = val
             if primary_model:
                 config["force_model"][primary_model] = val
-            logger.info(f"Thinking domain priority model set to: {val}")
+            logger.info(f"General model forcing set to: {val} (all requests forced to this model)")
+            log_queue.put(f"[GUI] General model forcing set to: {val}")
         save_rotation_config(config)
 
-    def on_quick_select(self, val):
-        config = load_rotation_config()
-        quick_models_list = config.get("quick_models", [])
-        quick_model_key = quick_models_list[0] if quick_models_list else ""
-        if "force_model" not in config:
-            config["force_model"] = {}
-        if val == "Auto (Rotation)":
-            if quick_model_key:
-                config["force_model"][quick_model_key] = "auto"
-            logger.info("Quick domain priority model reset to Auto.")
-        else:
-            if quick_model_key:
-                config["force_model"][quick_model_key] = val
-            logger.info(f"Quick domain priority model set to: {val}")
-        save_rotation_config(config)
+    on_force_select = on_thinking_select
 
     def on_kaggle_toggle(self):
         config = load_rotation_config()
@@ -1647,38 +1612,35 @@ class ProxyGUI(ctk.CTk):
 
         threading.Thread(target=do_test, daemon=True).start()
 
-    def on_manager_domain_change(self, val):
-        """Handle active domain choice change from the selector menu."""
-        config = load_rotation_config()
-        primary_model = config.get("primary_model", "")
-        quick_models_list = config.get("quick_models", [])
-        quick_model_key = quick_models_list[0] if quick_models_list else ""
-        if "Thinking Models" in val:
-            self.active_domain_key = primary_model
-        else:
-            self.active_domain_key = quick_model_key
-        self.load_active_rotation_from_disk()
-        logger.info(
-            f"[GUI] Switched manager domain selection to: {self.active_domain_key}"
-        )
-        log_queue.put(
-            f"[GUI] Switched manager domain selection to: {self.active_domain_key}"
-        )
-
     def on_add_model_to_rotation(self, model_id, provider=None):
-        """Add a model from scan to the end of the active domain's rotation list, with provider prefix."""
+        """Add a model from scan to the end of the active rotation list and thinking_models list, with provider prefix."""
         prefixed_model_id = model_id
-        if provider and provider != "gemini":
+        if provider and provider != "gemini" and not model_id.startswith(f"{provider}/"):
             prefixed_model_id = f"{provider}/{model_id}"
 
         if prefixed_model_id not in self.active_rotation_list:
             self.active_rotation_list.append(prefixed_model_id)
             self.render_rotation_list()
+
+            # Automatically sync to thinking_models and rotation_lists in config so it is available to force
+            try:
+                config = load_rotation_config()
+                if "rotation_lists" not in config:
+                    config["rotation_lists"] = {}
+                config["rotation_lists"][self.active_domain_key] = list(
+                    self.active_rotation_list
+                )
+                config["thinking_models"] = list(self.active_rotation_list)
+                save_rotation_config(config)
+                self.refresh_model_dropdowns()
+            except Exception as e:
+                logger.warning(f"Failed to auto-add model to rotation config: {e}")
+
             logger.info(
-                f"[GUI] Added model '{prefixed_model_id}' to current {self.active_domain_key} rotation configuration."
+                f"[GUI] Added model '{prefixed_model_id}' to rotation and forced model lists."
             )
             log_queue.put(
-                f"[GUI] Added model '{prefixed_model_id}' to current {self.active_domain_key} rotation configuration."
+                f"[GUI] Added model '{prefixed_model_id}' to rotation and forced model lists."
             )
 
     def load_active_rotation_from_disk(self):
@@ -1712,7 +1674,6 @@ class ProxyGUI(ctk.CTk):
         for widget in self.rotation_scroll.winfo_children():
             widget.destroy()
 
-        protected_id = self.active_domain_key
         for idx, model_id in enumerate(self.active_rotation_list):
             row_frame = ctk.CTkFrame(self.rotation_scroll, fg_color="transparent")
             row_frame.grid(row=idx, column=0, padx=2, pady=2, sticky="ew")
@@ -1776,62 +1737,52 @@ class ProxyGUI(ctk.CTk):
             )
             btn_test.grid(row=0, column=2, padx=2)
 
-            # Check core boundaries (don't allow removing protected first element)
-            if model_id != protected_id:
-                # Up button
-                up_cb = lambda i=idx: self.on_shift_model_priority(i, direction=-1)
-                btn_up = ctk.CTkButton(
-                    row_frame,
-                    text="▲",
-                    width=22,
-                    height=18,
-                    font=self.font_normal_8,
-                    corner_radius=2,
-                    command=up_cb,
-                )
-                btn_up.grid(row=0, column=3, padx=1)
+            # Up button
+            up_cb = lambda i=idx: self.on_shift_model_priority(i, direction=-1)
+            btn_up = ctk.CTkButton(
+                row_frame,
+                text="▲",
+                width=22,
+                height=18,
+                font=self.font_normal_8,
+                corner_radius=2,
+                command=up_cb,
+            )
+            btn_up.grid(row=0, column=3, padx=1)
 
-                # Down button
-                down_cb = lambda i=idx: self.on_shift_model_priority(i, direction=1)
-                btn_down = ctk.CTkButton(
-                    row_frame,
-                    text="▼",
-                    width=22,
-                    height=18,
-                    font=self.font_normal_8,
-                    corner_radius=2,
-                    command=down_cb,
-                )
-                btn_down.grid(row=0, column=4, padx=1)
+            # Down button
+            down_cb = lambda i=idx: self.on_shift_model_priority(i, direction=1)
+            btn_down = ctk.CTkButton(
+                row_frame,
+                text="▼",
+                width=22,
+                height=18,
+                font=self.font_normal_8,
+                corner_radius=2,
+                command=down_cb,
+            )
+            btn_down.grid(row=0, column=4, padx=1)
 
-                # Remove button
-                del_cb = lambda m=model_id: self.on_remove_model_from_rotation(m)
-                btn_del = ctk.CTkButton(
-                    row_frame,
-                    text="✕",
-                    width=22,
-                    height=18,
-                    text_color="#E74C3C",
-                    font=self.font_normal_8,
-                    fg_color="transparent",
-                    hover_color="#2c2c2c",
-                    corner_radius=2,
-                    command=del_cb,
-                )
-                btn_del.grid(row=0, column=5, padx=1)
+            # Remove button
+            del_cb = lambda m=model_id: self.on_remove_model_from_rotation(m)
+            btn_del = ctk.CTkButton(
+                row_frame,
+                text="✕",
+                width=22,
+                height=18,
+                text_color="#E74C3C",
+                font=self.font_normal_8,
+                fg_color="transparent",
+                hover_color="#2c2c2c",
+                corner_radius=2,
+                command=del_cb,
+            )
+            btn_del.grid(row=0, column=5, padx=1)
 
     def on_shift_model_priority(self, index, direction):
         """Shift model priority up (-1) or down (+1) in the rotation list."""
         new_index = index + direction
-        protected_id = self.active_domain_key
         if 0 <= new_index < len(self.active_rotation_list):
-            # Maintain boundary at index 0
-            if self.active_rotation_list[0] == protected_id and (
-                index == 0 or new_index == 0
-            ):
-                return
-
-            # Swap items
             self.active_rotation_list[index], self.active_rotation_list[new_index] = (
                 self.active_rotation_list[new_index],
                 self.active_rotation_list[index],
@@ -1840,13 +1791,12 @@ class ProxyGUI(ctk.CTk):
 
     def on_remove_model_from_rotation(self, model_id):
         """Remove a model from the local in-memory rotation list."""
-        protected_id = self.active_domain_key
-        if model_id != protected_id and model_id in self.active_rotation_list:
+        if model_id in self.active_rotation_list:
             self.active_rotation_list.remove(model_id)
             self.render_rotation_list()
 
     def on_save_active_rotation(self):
-        """Save the configured rotation lists to config_rotation.json."""
+        """Save the configured rotation lists and sync all models to thinking_models in config_rotation.json."""
         try:
             config = load_rotation_config()
             if "rotation_lists" not in config:
@@ -1854,6 +1804,7 @@ class ProxyGUI(ctk.CTk):
             config["rotation_lists"][self.active_domain_key] = list(
                 self.active_rotation_list
             )
+            config["thinking_models"] = list(self.active_rotation_list)
             save_rotation_config(config)
             logger.info(
                 f"[GUI] Successfully saved active {self.active_domain_key} rotation configuration on disk!"
@@ -1867,69 +1818,55 @@ class ProxyGUI(ctk.CTk):
             log_queue.put(f"[GUI] [ERROR] Failed to save rotation config: {e}")
 
     def refresh_model_dropdowns(self):
-        """Refresh the model selection dropdown lists on the left panel with current rotation lists."""
+        """Refresh the general forced model selection dropdown list on the left panel."""
         try:
             config = load_rotation_config()
             rotation_lists = config.get("rotation_lists", {})
-            primary_model = config.get("primary_model", "")
-            thinking_models_list = config.get("thinking_models", [])
-            quick_models_list = config.get("quick_models", [])
-            quick_model_key = quick_models_list[0] if quick_models_list else ""
+            primary_model = config.get("primary_model", "gemini-3.6-flash")
 
-            # 1. Thinking models
-            thinking_list = rotation_lists.get(primary_model, thinking_models_list)
-            if not thinking_list:
-                thinking_list = thinking_models_list
+            if hasattr(self, "active_rotation_list") and self.active_rotation_list:
+                active_list = list(self.active_rotation_list)
+            else:
+                active_list = rotation_lists.get(primary_model, [])
+                if not active_list:
+                    active_list = config.get("thinking_models", [])
+
             # Ensure unique and preserve order, prepend Auto (Rotation)
-            thinking_values = ["Auto (Rotation)"]
-            for m in thinking_list:
-                if m not in thinking_values:
-                    thinking_values.append(m)
+            forced_values = ["Auto (Rotation)"]
+            for m in active_list:
+                if m and m not in forced_values:
+                    forced_values.append(m)
 
             # Update option menu values
-            self.thinking_select.configure(values=thinking_values)
+            self.thinking_select.configure(values=forced_values)
 
             # Restore current selection or set to Auto if not found
             force_model_config = config.get("force_model", {})
-            thinking_val = force_model_config.get(primary_model, "auto")
-            if thinking_val == "auto" or thinking_val not in thinking_values:
+            if isinstance(force_model_config, dict):
+                forced_val = force_model_config.get("all") or force_model_config.get(primary_model, "auto")
+            elif isinstance(force_model_config, str):
+                forced_val = force_model_config
+            else:
+                forced_val = "auto"
+
+            if forced_val == "auto" or forced_val not in forced_values:
                 self.thinking_select.set("Auto (Rotation)")
                 if (
-                    thinking_val != "auto"
-                    and thinking_val not in thinking_values
+                    forced_val != "auto"
+                    and forced_val not in forced_values
                     and primary_model
                 ):
-                    config.setdefault("force_model", {})[primary_model] = "auto"
+                    if isinstance(force_model_config, dict):
+                        config.setdefault("force_model", {})["all"] = "auto"
+                        config.setdefault("force_model", {})[primary_model] = "auto"
+                    else:
+                        config["force_model"] = {"all": "auto"}
                     save_rotation_config(config)
             else:
-                self.thinking_select.set(thinking_val)
-
-            # 2. Quick models
-            quick_list = rotation_lists.get(quick_model_key, quick_models_list)
-            if not quick_list:
-                quick_list = quick_models_list
-            quick_values = ["Auto (Rotation)"]
-            for m in quick_list:
-                if m not in quick_values:
-                    quick_values.append(m)
-
-            self.quick_select.configure(values=quick_values)
-
-            quick_val = force_model_config.get(quick_model_key, "auto")
-            if quick_val == "auto" or quick_val not in quick_values:
-                self.quick_select.set("Auto (Rotation)")
-                if (
-                    quick_val != "auto"
-                    and quick_val not in quick_values
-                    and quick_model_key
-                ):
-                    config.setdefault("force_model", {})[quick_model_key] = "auto"
-                    save_rotation_config(config)
-            else:
-                self.quick_select.set(quick_val)
+                self.thinking_select.set(forced_val)
 
             logger.info(
-                "[GUI] Refreshed model selection dropdown lists with current rotation lists."
+                "[GUI] Refreshed forced model selection dropdown list with active rotation models."
             )
         except Exception as e:
             logger.error(f"[GUI] Failed to refresh model dropdowns: {e}")

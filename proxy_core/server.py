@@ -58,6 +58,7 @@ from proxy_core.helpers import (
     get_next_log_index,
     write_chat_log,
     translate_payload_to_openai,
+    sanitize_openai_payload_for_gemini,
     translate_openai_chunk_to_gemini,
     flush_tool_calls_to_gemini,
     add_anomaly_to_state,
@@ -360,9 +361,26 @@ def get_thinking_models() -> set:
     return set(config.get("thinking_models", []))
 
 
-def get_quick_models() -> set:
-    config = load_rotation_config()
-    return set(config.get("quick_models", []))
+def resolve_forced_model(rotation_config: dict) -> str:
+    config_force = rotation_config.get("force_model", {})
+    if isinstance(config_force, str):
+        forced_model = config_force
+    elif isinstance(config_force, dict):
+        forced_model = config_force.get("all")
+        if not forced_model or forced_model == "auto":
+            primary = rotation_config.get("primary_model", "")
+            forced_model = config_force.get(primary, "auto")
+        if forced_model == "auto":
+            for k, v in config_force.items():
+                if v and v not in ("auto", "Auto (Rotation)", "Auto (No Forcing)"):
+                    forced_model = v
+                    break
+    else:
+        forced_model = "auto"
+
+    if forced_model in ("Auto (Rotation)", "Auto (No Forcing)", "auto", "Auto"):
+        return "auto"
+    return forced_model
 
 
 def get_primary_model() -> str:
@@ -379,7 +397,6 @@ MODEL_SETTINGS = load_initial_model_settings()
 PRIMARY_MODEL = get_primary_model()
 FALLBACK_MODEL = get_fallback_model()
 THINKING_MODELS = get_thinking_models()
-QUICK_MODELS = get_quick_models()
 
 EXCLUDED_HEADERS = {
     "content-encoding",
@@ -1006,8 +1023,6 @@ async def _transparent_proxy_attempt(request: Request, path: str):
     global USE_KAGGLE, SAVE_CHAT_LOGS
     USE_KAGGLE = rotation_config.get("use_kaggle", USE_KAGGLE)
     SAVE_CHAT_LOGS = rotation_config.get("save_chat_logs", SAVE_CHAT_LOGS)
-    config_force_model = rotation_config.get("force_model", {})
-
     enable_model_rotation = rotation_config.get("enable_model_rotation", False)
     if enable_model_rotation:
         candidates = rotation_config["rotation_lists"].get(
@@ -1021,27 +1036,11 @@ async def _transparent_proxy_attempt(request: Request, path: str):
     if USE_KAGGLE and "qwen3.6" not in candidates:
         candidates = list(candidates) + ["qwen3.6"]
 
-    # Identify domain and check for manual override
-    forced_model = "auto"
-    thinking_models = get_thinking_models()
-    quick_models = get_quick_models()
-    primary = get_primary_model()
-    if requested_model in thinking_models or (primary and requested_model == primary):
-        forced_model = config_force_model.get(primary, "auto")
-    elif requested_model in quick_models:
-        quick_primary = (
-            rotation_config.get("quick_models", [""])[0]
-            if rotation_config.get("quick_models")
-            else ""
-        )
-        forced_model = (
-            config_force_model.get(quick_primary, "auto") if quick_primary else "auto"
-        )
-    else:
-        forced_model = config_force_model.get(requested_model, "auto")
-
+    # General model forcing (Force all to this model if configured)
+    forced_model = resolve_forced_model(rotation_config)
     now = time.time()
     if forced_model != "auto":
+        candidates = [forced_model]
         available_candidates = [forced_model]
     elif not enable_model_rotation:
         available_candidates = candidates  # bypass cooldowns when rotation is disabled
@@ -1213,7 +1212,9 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     f"Dynamically registered Gemini settings for model '{candidate_model}'"
                 )
 
-        if explicit_provider == "openrouter":
+        if candidate_model in MODEL_SETTINGS and (forced_model != "auto" or not explicit_provider):
+            model_settings = MODEL_SETTINGS[candidate_model]
+        elif explicit_provider == "openrouter":
             model_settings = {
                 "provider": "openrouter",
                 "base_url": "https://openrouter.ai/api/v1",
@@ -1282,7 +1283,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 else candidate_model,
             }
         else:
-            model_settings = MODEL_SETTINGS[candidate_model]
+            model_settings = MODEL_SETTINGS.get(candidate_model, {})
 
         provider_name = model_settings["provider"]
         target_base_url = model_settings["base_url"]
@@ -1306,10 +1307,33 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
         if provider_name == "gemini":
             target_path = path
-            if target_path.startswith("google/"):
-                target_path = target_path[7:]
-            if requested_model and requested_model in path and candidate_model != requested_model:
-                target_path = path.replace(requested_model, target_model_id)
+            for prefix in (
+                "openrouter/",
+                "mistral/",
+                "llm7/",
+                "ollama_cloud/",
+                "ollama/",
+                "opencode_zen/",
+                "opencode/",
+                "google/",
+            ):
+                if target_path.startswith(prefix):
+                    target_path = target_path[len(prefix) :]
+                    break
+            if not is_gemini_client:
+                # Client is sending OpenAI-compatible request (e.g. /v1/chat/completions or chat/completions)
+                if not target_path.startswith("v1beta/"):
+                    if target_path.startswith("v1/"):
+                        target_path = "v1beta/" + target_path[3:]
+                    else:
+                        target_path = "v1beta/" + target_path
+            else:
+                if (
+                    requested_model
+                    and requested_model in target_path
+                    and candidate_model != requested_model
+                ):
+                    target_path = target_path.replace(requested_model, target_model_id)
         else:
             if is_gemini_client:
                 target_path = "chat/completions"
@@ -1329,6 +1353,8 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     target_path = path[9:]
                 elif path.startswith("opencode_zen/"):
                     target_path = path[13:]
+                elif path.startswith("google/"):
+                    target_path = path[7:]
                 else:
                     target_path = path
 
@@ -1381,25 +1407,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 break
 
             current_config = load_rotation_config()
-            current_force_model = current_config.get("force_model", {})
-            thinking_models = get_thinking_models()
-            quick_models = get_quick_models()
-            primary = get_primary_model()
-            if requested_model in thinking_models or (primary and requested_model == primary):
-                current_forced_model = current_force_model.get(primary, "auto")
-            elif requested_model in quick_models:
-                quick_primary = (
-                    current_config.get("quick_models", [""])[0]
-                    if current_config.get("quick_models")
-                    else ""
-                )
-                current_forced_model = (
-                    current_force_model.get(quick_primary, "auto")
-                    if quick_primary
-                    else "auto"
-                )
-            else:
-                current_forced_model = current_force_model.get(requested_model, "auto")
+            current_forced_model = resolve_forced_model(current_config)
 
             if current_forced_model != forced_model:
                 logger.info(
@@ -1435,6 +1443,8 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                 headers["authorization"] = f"Bearer {api_key}"
             else:
                 headers["x-goog-api-key"] = api_key
+                if not is_gemini_client:
+                    headers["authorization"] = f"Bearer {api_key}"
 
             request_body = body
             if provider_name in (
@@ -1457,6 +1467,20 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     logger.warning(
                         f"Failed to translate payload for OpenAI format: {e}"
                     )
+            else:
+                # Target is Gemini
+                if not is_gemini_client and body:
+                    try:
+                        body_dict = json.loads(body)
+                        if isinstance(body_dict, dict):
+                            sanitized = sanitize_openai_payload_for_gemini(
+                                body_dict, target_model_id
+                            )
+                            request_body = json.dumps(sanitized).encode("utf-8")
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to sanitize payload for Gemini OpenAI endpoint: {e}"
+                        )
 
             current_query_params = {
                 k: v for k, v in query_params.items() if k.lower() != "key"

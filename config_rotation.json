@@ -1,22 +1,29 @@
 {
-  "last_fallback_switch_time": 1785442002.2997224,
+  "last_fallback_switch_time": 1786699592.6044962,
   "primary_model": "gemini-3.6-flash",
   "fallback_model": "gemini-3-flash-preview",
   "model_cooldowns": {},
   "consecutive_model_failures": {
+    "ollama/minimax-m3": 0,
     "gemini-3.6-flash": 0,
-    "minimax-3": 0,
-    "gemini-flash-lite-latest": 0
+    "mistral/zai-glm-5-2": 0,
+    "gemini-3.5-flash": 0,
+    "opencode_zen/deepseek-v4-flash-free": 0,
+    "zai-glm-5-2": 0,
+    "google/gemini-3.7-flash": 0
   },
   "thinking_models": [
     "gemini-3.6-flash",
+    "google/gemini-3.7-flash",
     "gemini-3.5-flash",
-    "openrouter/owl-alpha",
-    "deepseek/deepseek-v4-flash:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "qwen/qwen3-coder:free",
-    "moonshotai/kimi-k2.6:free",
-    "deepseek/deepseek-r1:free"
+    "opencode_zen/deepseek-v4-flash-free",
+    "opencode_zen/nemotron-3.5-lightning-free",
+    "opencode_zen/nemotron-3-ultra-free",
+    "ollama/gpt-oss:120b",
+    "ollama/minimax-m3",
+    "mistral/zai-glm-5-2",
+    "mistral/mistral-large-latest",
+    "mistral/mistral-medium-latest"
   ],
   "quick_models": [
     "gemini-flash-lite-latest",
@@ -29,6 +36,18 @@
     "qwen/qwen-2.5-coder-32b-instruct:free"
   ],
   "model_settings": {
+    "gemini-3.7-flash": {
+      "provider": "gemini",
+      "base_url": "https://generativelanguage.googleapis.com",
+      "keys_pool": "API_KEYS",
+      "target_model": "gemini-3.7-flash"
+    },
+    "google/gemini-3.7-flash": {
+      "provider": "gemini",
+      "base_url": "https://generativelanguage.googleapis.com",
+      "keys_pool": "API_KEYS",
+      "target_model": "gemini-3.7-flash"
+    },
     "gemini-3.6-flash": {
       "provider": "gemini",
       "base_url": "https://generativelanguage.googleapis.com",
@@ -123,13 +142,16 @@
   "rotation_lists": {
     "gemini-3.6-flash": [
       "gemini-3.6-flash",
+      "google/gemini-3.7-flash",
       "gemini-3.5-flash",
-      "openrouter/owl-alpha",
-      "deepseek/deepseek-v4-flash:free",
-      "meta-llama/llama-3.3-70b-instruct:free",
-      "qwen/qwen3-coder:free",
-      "moonshotai/kimi-k2.6:free",
-      "gemini-3-flash-preview"
+      "opencode_zen/deepseek-v4-flash-free",
+      "opencode_zen/nemotron-3.5-lightning-free",
+      "opencode_zen/nemotron-3-ultra-free",
+      "ollama/gpt-oss:120b",
+      "ollama/minimax-m3",
+      "mistral/zai-glm-5-2",
+      "mistral/mistral-large-latest",
+      "mistral/mistral-medium-latest"
     ],
     "gemini-flash-lite-latest": [
       "gemini-flash-lite-latest",
@@ -153,8 +175,8 @@
   },
   "use_kaggle": false,
   "force_model": {
-    "gemini-3.6-flash": "auto",
-    "gemini-flash-lite-latest": "auto"
+    "all": "google/gemini-3.7-flash",
+    "gemini-3.6-flash": "google/gemini-3.7-flash"
   },
   "save_chat_logs": false,
   "vpn_switching_mode": "every_request",
