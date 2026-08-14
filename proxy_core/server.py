@@ -59,6 +59,7 @@ from proxy_core.helpers import (
     write_chat_log,
     translate_payload_to_openai,
     translate_openai_chunk_to_gemini,
+    flush_tool_calls_to_gemini,
     add_anomaly_to_state,
 )
 
@@ -1588,6 +1589,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
                             async def iter_translated_chunks():
                                 translation_buffer = ""
+                                tool_call_acc = {"calls": {}}
                                 async for chunk in iter_bytes():
                                     chunk_str = ""
                                     try:
@@ -1622,13 +1624,12 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                                 line_stripped = line.strip()
                                                 if line_stripped:
                                                     translated_line = translate_openai_chunk_to_gemini(
-                                                        line_stripped
+                                                        line_stripped, tool_call_acc
                                                     )
-                                                    yield translated_line.encode(
-                                                        "utf-8"
-                                                    )
-                                                else:
-                                                    yield b"\n"
+                                                    if translated_line:
+                                                        yield f"{translated_line}\n\n".encode(
+                                                            "utf-8"
+                                                        )
                                         except Exception as te:
                                             logger.debug(
                                                 f"Failed to translate response chunk: {te}"
@@ -1647,15 +1648,33 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                         try:
                                             translated_line = (
                                                 translate_openai_chunk_to_gemini(
-                                                    line_stripped
+                                                    line_stripped, tool_call_acc
                                                 )
                                             )
-                                            yield translated_line.encode("utf-8")
+                                            if translated_line:
+                                                yield f"{translated_line}\n\n".encode("utf-8")
                                         except Exception as te:
                                             logger.debug(
                                                 f"Failed to translate trailing chunk: {te}"
                                             )
                                             yield translation_buffer.encode("utf-8")
+
+                                # If any tool calls remain un-emitted at stream end, emit them!
+                                if (
+                                    needs_gemini_response_translation
+                                    and tool_call_acc
+                                    and tool_call_acc.get("calls")
+                                ):
+                                    try:
+                                        flushed = flush_tool_calls_to_gemini(
+                                            tool_call_acc
+                                        )
+                                        if flushed:
+                                            yield f"{flushed}\n\n".encode("utf-8")
+                                    except Exception as fe:
+                                        logger.debug(
+                                            f"Failed to flush tool calls at stream end: {fe}"
+                                        )
 
                             async for trans_chunk in iter_translated_chunks():
                                 yield trans_chunk

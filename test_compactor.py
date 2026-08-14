@@ -590,11 +590,13 @@ def test_translate_payload_to_openai():
     # Assistant message with tool_calls
     assert translated["messages"][2]["role"] == "assistant"
     assert "tool_calls" in translated["messages"][2]
+    call_id = translated["messages"][2]["tool_calls"][0]["id"]
     assert translated["messages"][2]["tool_calls"][0]["function"]["name"] == "list_dir"
     assert '"path": "."' in translated["messages"][2]["tool_calls"][0]["function"]["arguments"]
 
-    # Tool response
+    # Tool response must match call_id!
     assert translated["messages"][3]["role"] == "tool"
+    assert translated["messages"][3]["tool_call_id"] == call_id
     assert translated["messages"][3]["name"] == "list_dir"
     assert "a.txt" in translated["messages"][3]["content"]
 
@@ -610,41 +612,52 @@ def test_translate_payload_to_openai():
 
 def test_translate_openai_chunk_to_gemini():
     print("Testing translate_openai_chunk_to_gemini...")
-    from proxy_core.helpers import translate_openai_chunk_to_gemini
+    from proxy_core.helpers import translate_openai_chunk_to_gemini, flush_tool_calls_to_gemini
 
     # 1. Reasoning chunk (GLM-5 / Minimax M3 / DeepSeek)
     openai_chunk_reasoning = 'data: {"choices": [{"delta": {"reasoning_content": "Analyzing request..."}}]}'
     res1 = translate_openai_chunk_to_gemini(openai_chunk_reasoning)
     assert "Analyzing request..." in res1
+    assert '"thought": true' in res1
     assert "candidates" in res1
 
     # 2. Text chunk
     openai_chunk_text = 'data: {"choices": [{"delta": {"content": "Hello world"}}]}'
     res2 = translate_openai_chunk_to_gemini(openai_chunk_text)
     assert "Hello world" in res2
+    assert "thought" not in res2
 
     # 3. Tool call chunk streaming accumulation
-    acc = {"name": "", "args_str": ""}
-    tc_chunk1 = 'data: {"choices": [{"delta": {"tool_calls": [{"function": {"name": "read_files", "arguments": "{\\"path\\": "}}]}}]}'
-    tc_chunk2 = 'data: {"choices": [{"delta": {"tool_calls": [{"function": {"arguments": "\\"main.py\\"}"}}]}}]}'
+    acc = {"calls": {}}
+    tc_chunk1 = 'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"name": "read_files", "arguments": "{\\"path\\": "}}]}}]}'
+    tc_chunk2 = 'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": "\\"main.py\\"}"}}]}}]}'
     tc_chunk_end = 'data: {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}'
 
     res3a = translate_openai_chunk_to_gemini(tc_chunk1, acc)
-    assert acc["name"] == "read_files"
-    assert acc["args_str"] == '{"path": '
+    assert res3a == ""  # Intermediate chunk buffered
+    assert acc["calls"][0]["name"] == "read_files"
+    assert acc["calls"][0]["args_str"] == '{"path": '
 
     res3b = translate_openai_chunk_to_gemini(tc_chunk2, acc)
-    assert acc["args_str"] == '{"path": "main.py"}'
+    assert res3b == ""
+    assert acc["calls"][0]["args_str"] == '{"path": "main.py"}'
 
     res3c = translate_openai_chunk_to_gemini(tc_chunk_end, acc)
     assert "functionCall" in res3c
     assert "read_files" in res3c
     assert "main.py" in res3c
-    assert "TOOL_CALLS" in res3c
-    assert acc["name"] == ""
+    assert "STOP" in res3c
+    assert not acc.get("calls")
 
-    # 4. Done chunk
-    assert translate_openai_chunk_to_gemini("data: [DONE]") == "data: [DONE]"
+    # 4. Done chunk returns empty string (never forwards [DONE] to Gemini client)
+    assert translate_openai_chunk_to_gemini("data: [DONE]") == ""
+
+    # 5. Flush at stream end if tool calls remained
+    acc2 = {"calls": {0: {"name": "test_tool", "args_str": '{"key": "val"}'}}}
+    flushed = flush_tool_calls_to_gemini(acc2)
+    assert "test_tool" in flushed
+    assert "val" in flushed
+    assert not acc2.get("calls")
 
     print("  -> translate_openai_chunk_to_gemini passed!")
 
