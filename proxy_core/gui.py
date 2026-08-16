@@ -225,7 +225,7 @@ class ProxyGUI(ctk.CTk):
             text="Force Model (All Requests):",
             font=ctk.CTkFont(size=10, weight="bold"),
         ).pack(anchor="w", padx=10)
-        active_rotation_models = rotation_lists.get(primary_model, [])
+        active_rotation_models = config.get("rotation_lists", {}).get(primary_model, [])
         if not active_rotation_models:
             active_rotation_models = thinking_models_list
         forced_models = ["Auto (Rotation)"] + [
@@ -236,7 +236,9 @@ class ProxyGUI(ctk.CTk):
         )
         self.thinking_select.pack(fill="x", padx=10, pady=(2, 10))
         self.force_select = self.thinking_select
-        forced_val = config_force_model.get("all") or config_force_model.get(primary_model, "auto")
+        forced_val = config_force_model.get("all") or config_force_model.get(
+            primary_model, "auto"
+        )
         if forced_val == "auto" or forced_val not in forced_models:
             self.thinking_select.set("Auto (Rotation)")
         else:
@@ -752,7 +754,9 @@ class ProxyGUI(ctk.CTk):
             config["force_model"]["all"] = val
             if primary_model:
                 config["force_model"][primary_model] = val
-            logger.info(f"General model forcing set to: {val} (all requests forced to this model)")
+            logger.info(
+                f"General model forcing set to: {val} (all requests forced to this model)"
+            )
             log_queue.put(f"[GUI] General model forcing set to: {val}")
         save_rotation_config(config)
 
@@ -1276,13 +1280,19 @@ class ProxyGUI(ctk.CTk):
                                 break
                         except Exception as err:
                             last_err = err
-                            key_num = API_KEYS.index(api_key) + 1 if api_key in API_KEYS else 0
+                            key_num = (
+                                API_KEYS.index(api_key) + 1
+                                if api_key in API_KEYS
+                                else 0
+                            )
                             logger.warning(
                                 f"[GUI] Fetch Google models failed with key [key#{key_num}]: {err}. Rotating key..."
                             )
 
                     if raw_data is None:
-                        raise last_err or RuntimeError("Failed to fetch Google models with available keys.")
+                        raise last_err or RuntimeError(
+                            "Failed to fetch Google models with available keys."
+                        )
 
                     logger.info(
                         f"[GUI] Google models response:\n{beautify_json_string(raw_data)}"
@@ -1297,9 +1307,7 @@ class ProxyGUI(ctk.CTk):
                             {
                                 "id": model_id,
                                 "name": m.get("displayName", model_id),
-                                "context_length": m.get(
-                                    "inputTokenLimit", "unknown"
-                                ),
+                                "context_length": m.get("inputTokenLimit", "unknown"),
                                 "provider": "google",
                             }
                         )
@@ -1615,7 +1623,11 @@ class ProxyGUI(ctk.CTk):
     def on_add_model_to_rotation(self, model_id, provider=None):
         """Add a model from scan to the end of the active rotation list and thinking_models list, with provider prefix."""
         prefixed_model_id = model_id
-        if provider and provider != "gemini" and not model_id.startswith(f"{provider}/"):
+        if (
+            provider
+            and provider != "gemini"
+            and not model_id.startswith(f"{provider}/")
+        ):
             prefixed_model_id = f"{provider}/{model_id}"
 
         if prefixed_model_id not in self.active_rotation_list:
@@ -1843,7 +1855,9 @@ class ProxyGUI(ctk.CTk):
             # Restore current selection or set to Auto if not found
             force_model_config = config.get("force_model", {})
             if isinstance(force_model_config, dict):
-                forced_val = force_model_config.get("all") or force_model_config.get(primary_model, "auto")
+                forced_val = force_model_config.get("all") or force_model_config.get(
+                    primary_model, "auto"
+                )
             elif isinstance(force_model_config, str):
                 forced_val = force_model_config
             else:
