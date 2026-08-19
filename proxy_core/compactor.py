@@ -239,7 +239,7 @@ BANNED_COMPRESSED_TOOLS = {
     "tokensave_derives",
     "tokensave_impls",
     "tokensave_similar",
-    "tokensave_call_chain",    
+    "tokensave_call_chain",
     "tokensave_status",
     # 3. Неиспользуемые или избыточные утилиты tokensave (БЛОКИРУЕМ)
     "tokensave_annotations",
@@ -303,7 +303,10 @@ def prune_mcp_xml_descriptions(tools_payload, blacklist=BANNED_COMPRESSED_TOOLS)
                     is_banned = False
                     if t_name in blacklist:
                         is_banned = True
-                    elif t_name.startswith("tokensave_tokensave_") and t_name[11:] in blacklist:
+                    elif (
+                        t_name.startswith("tokensave_tokensave_")
+                        and t_name[11:] in blacklist
+                    ):
                         is_banned = True
                     elif t_name.startswith("tokensave_") and t_name[10:] in blacklist:
                         is_banned = True
@@ -864,6 +867,32 @@ def inject_tool_guardrails(data):
     return data
 
 
+def normalize_gemini_thinking_temperature(data):
+    """
+    Ensure temperature is at least 0.7 for Gemini thinking models to prevent
+    'Thinking Collapse' (where low temp causes the model to output STOP immediately after thoughts).
+    """
+    # Gemini native format
+    if "generationConfig" in data and isinstance(data["generationConfig"], dict):
+        gc = data["generationConfig"]
+        if "temperature" in gc and gc["temperature"] is not None:
+            if float(gc["temperature"]) < 0.7:
+                gc["temperature"] = 0.7
+                logger.debug(
+                    "[Compactor] Clamped generationConfig.temperature to 0.7 for Gemini thinking stability"
+                )
+
+    # OpenAI format
+    if "temperature" in data and data["temperature"] is not None:
+        if float(data["temperature"]) < 0.7:
+            data["temperature"] = 0.7
+            logger.debug(
+                "[Compactor] Clamped payload.temperature to 0.7 for Gemini thinking stability"
+            )
+
+    return data
+
+
 def process_request_payload(payload_dict, config=None):
     """Main entry point for GeminiProxy context compaction."""
     if config is None:
@@ -991,6 +1020,7 @@ def process_request_payload(payload_dict, config=None):
                 )
             # Monkey-patch is_mixed_content to prevent splitting pure code/diff/results/html into uncompressed plain text
             _orig_is_mixed_content = cr.is_mixed_content
+
             def _safe_is_mixed_content(content: str) -> bool:
                 detection = cr._detect_content(content)
                 if detection.content_type in (
@@ -1001,6 +1031,7 @@ def process_request_payload(payload_dict, config=None):
                 ):
                     return False
                 return _orig_is_mixed_content(content)
+
             cr.is_mixed_content = _safe_is_mixed_content
             logger.debug(
                 "[Compactor] Monkey-patched headroom.is_mixed_content to prevent splitting pure blocks"
@@ -1080,7 +1111,11 @@ def process_request_payload(payload_dict, config=None):
                     children_list = self._node.children
                     if callable(children_list):
                         children_list = children_list()
-                    return [SafeNodeWrapper(c) for c in children_list] if children_list is not None else []
+                    return (
+                        [SafeNodeWrapper(c) for c in children_list]
+                        if children_list is not None
+                        else []
+                    )
 
                 def __getattr__(self, name):
                     if name == "_node":
@@ -1166,8 +1201,9 @@ def process_request_payload(payload_dict, config=None):
 
             _orig_get_parser = tree_sitter_language_pack.get_parser
             import sys
+
             _mod = sys.modules[__name__]
-            if not hasattr(_mod, '_orig_get_parser'):
+            if not hasattr(_mod, "_orig_get_parser"):
                 _mod._orig_get_parser = _orig_get_parser
 
             def _safe_get_parser(language):
@@ -1217,33 +1253,46 @@ def process_request_payload(payload_dict, config=None):
             # fallback to always replace the code_aware result with the
             # original content when kompress is disabled.
             _orig_try_ml = router._try_ml_compressor
+
             def _patched_try_ml(content, context, question=None):
                 if router.config.enable_kompress:
                     return _orig_try_ml(content, context, question)
                 # Return high token count so fallback never beats code_aware
                 return content, len(content)
+
             router._try_ml_compressor = _patched_try_ml
 
             _orig_compress = ContentRouter.compress
+
             def _safe_compress(self, *args, **kwargs):
                 try:
                     return _orig_compress(self, *args, **kwargs)
                 except Exception as ex:
                     import traceback
-                    logger.error(f"[Compactor] Traceback for headroom error:\n{traceback.format_exc()}")
+
+                    logger.error(
+                        f"[Compactor] Traceback for headroom error:\n{traceback.format_exc()}"
+                    )
                     raise ex
+
             ContentRouter.compress = _safe_compress
 
             # Monkey-patch CodeAwareCompressor._compress_with_ast to capture tree-sitter tracebacks
             from headroom.transforms.code_compressor import CodeAwareCompressor
+
             _orig_compress_with_ast = CodeAwareCompressor._compress_with_ast
+
             def _safe_compress_with_ast(self, *args, **kwargs):
                 try:
                     return _orig_compress_with_ast(self, *args, **kwargs)
                 except Exception as ex:
                     import traceback
-                    logger.error(f"[Compactor] Traceback for headroom _compress_with_ast error:\n{traceback.format_exc()}")
+
+                    logger.error(
+                        f"[Compactor] Traceback for headroom _compress_with_ast error:\n{traceback.format_exc()}"
+                    )
                     raise ex
+
             CodeAwareCompressor._compress_with_ast = _safe_compress_with_ast
 
             if "messages" in payload_dict:
@@ -1314,5 +1363,7 @@ def process_request_payload(payload_dict, config=None):
     state.COMPACTOR_COMP_TOKENS = (
         getattr(state, "COMPACTOR_COMP_TOKENS", 0) + final_tokens
     )
+
+    payload_dict = normalize_gemini_thinking_temperature(payload_dict)
 
     return payload_dict
