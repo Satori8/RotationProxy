@@ -867,6 +867,57 @@ def inject_tool_guardrails(data):
     return data
 
 
+def strip_historical_thoughts_from_contents(data):
+    """
+    Google Gemini 2.5 / 3.7 explicitly documents that `thought: true` chunks returned during
+    streaming should NOT be passed back in subsequent `contents` requests. Sending past thoughts
+    confuses the model's reasoning termination logic and causes premature STOP finishReason.
+    """
+    if "contents" in data and isinstance(data["contents"], list):
+        for msg in data["contents"]:
+            if (
+                msg.get("role") == "model"
+                and "parts" in msg
+                and isinstance(msg["parts"], list)
+            ):
+                non_thought_parts = [
+                    p
+                    for p in msg["parts"]
+                    if not (isinstance(p, dict) and p.get("thought") is True)
+                ]
+                if non_thought_parts:
+                    msg["parts"] = non_thought_parts
+                else:
+                    msg["parts"] = [{"text": ""}]
+
+    if "messages" in data and isinstance(data["messages"], list):
+        for msg in data["messages"]:
+            if msg.get("role") == "assistant":
+                if "reasoning_content" in msg:
+                    del msg["reasoning_content"]
+
+    return data
+
+
+def normalize_thinking_config(data):
+    """
+    Normalizes thinkingConfig in generationConfig:
+    - Replaces invalid 'budgetTokens' key with valid 'thinkingBudget'.
+    """
+    if "generationConfig" in data and isinstance(data["generationConfig"], dict):
+        gc = data["generationConfig"]
+        if "thinkingConfig" in gc and isinstance(gc["thinkingConfig"], dict):
+            tc = gc["thinkingConfig"]
+            if "budgetTokens" in tc:
+                budget = tc.pop("budgetTokens")
+                tc["thinkingBudget"] = budget
+                logger.debug(
+                    f"[Compactor] Normalized thinkingConfig.budgetTokens -> thinkingBudget: {budget}"
+                )
+
+    return data
+
+
 def normalize_gemini_thinking_temperature(data):
     """
     Ensure temperature is at least 0.7 for Gemini thinking models to prevent
@@ -1364,6 +1415,8 @@ def process_request_payload(payload_dict, config=None):
         getattr(state, "COMPACTOR_COMP_TOKENS", 0) + final_tokens
     )
 
+    payload_dict = strip_historical_thoughts_from_contents(payload_dict)
+    payload_dict = normalize_thinking_config(payload_dict)
     payload_dict = normalize_gemini_thinking_temperature(payload_dict)
 
     return payload_dict
