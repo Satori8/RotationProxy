@@ -1639,7 +1639,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                     while True:
                                         cfg = load_rotation_config()
                                         timeout_val = (
-                                            15.0
+                                            30.0
                                             if cfg.get("sse_keepalive", True)
                                             else None
                                         )
@@ -1652,9 +1652,12 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                             else:
                                                 msg_type, data = await chunk_queue.get()
                                         except asyncio.TimeoutError:
-                                            # Send SSE comment ping to keep TCP socket & OpenCode idle timer alive
+                                            # Send valid empty SSE heartbeat chunk so client parser never fails
                                             # Reader task is NOT cancelled because it runs independently!
-                                            yield b": ping\n\n"
+                                            if is_gemini_client:
+                                                yield b"data: {}\n\n"
+                                            else:
+                                                yield b": ping\n\n"
                                             continue
 
                                         if msg_type == "chunk":
@@ -1680,7 +1683,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                 tool_call_acc = {"calls": {}}
                                 terminal_emitted = False
                                 async for chunk in iter_bytes():
-                                    if chunk == b": ping\n\n":
+                                    if chunk in (b": ping\n\n", b"data: {}\n\n"):
                                         yield chunk
                                         continue
 
