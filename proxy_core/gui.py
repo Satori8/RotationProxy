@@ -2487,6 +2487,17 @@ class ProxyGUI(ctk.CTk):
         )
         self.cb_enable_headroom.pack(anchor="w", pady=5)
 
+        self.var_strip_thoughts = tk.BooleanVar(
+            value=config.get("compactor_strip_thoughts", False)
+        )
+        self.cb_strip_thoughts = ctk.CTkCheckBox(
+            cb_frame,
+            text="Strip Past Thoughts from History (Gemini)",
+            variable=self.var_strip_thoughts,
+            font=ctk.CTkFont(size=11),
+        )
+        self.cb_strip_thoughts.pack(anchor="w", pady=5)
+
         # Save settings callback
         def save_settings():
             try:
@@ -2501,6 +2512,7 @@ class ProxyGUI(ctk.CTk):
                 cfg["compactor_move_reminders"] = self.var_move_reminders.get()
                 cfg["compactor_inject_guardrails"] = self.var_inject_guardrails.get()
                 cfg["compactor_enable_headroom"] = self.var_enable_headroom.get()
+                cfg["compactor_strip_thoughts"] = self.var_strip_thoughts.get()
                 save_rotation_config(cfg)
                 logger.info("[GUI] Compactor settings saved successfully.")
                 log_queue.put("[GUI] Compactor settings saved successfully.")

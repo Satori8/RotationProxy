@@ -1415,7 +1415,8 @@ def process_request_payload(payload_dict, config=None):
         getattr(state, "COMPACTOR_COMP_TOKENS", 0) + final_tokens
     )
 
-    payload_dict = strip_historical_thoughts_from_contents(payload_dict)
+    if config.get("compactor_strip_thoughts", False):
+        payload_dict = strip_historical_thoughts_from_contents(payload_dict)
     payload_dict = normalize_thinking_config(payload_dict)
     payload_dict = normalize_gemini_thinking_temperature(payload_dict)
 
