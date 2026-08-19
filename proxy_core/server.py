@@ -70,6 +70,19 @@ import os
 
 logger = logging.getLogger("proxy")
 
+
+class InvalidStreamError(Exception):
+    """Signals that an upstream stream completed with invalid content or prematurely terminated."""
+
+    def __init__(self, message: str, error_type: str):
+        super().__init__(message)
+        self.message = message
+        self.type = error_type
+
+    def __str__(self):
+        return f"[{self.type}] {self.message}"
+
+
 # Dynamically add vpn_manager directory to path
 vpn_dir = r"D:\Work\Active\server-services\vpn_switcher"
 if vpn_dir not in sys.path:
@@ -514,6 +527,15 @@ async def analyze_response_for_anomalies(
                 msg = (
                     f"Response text is empty or only whitespace (Provider: {provider})."
                 )
+                logger.warning(f"[{model}] [Anomaly] {msg}")
+                add_anomaly_to_state(model, msg)
+
+        # Check token usage anomalies
+        usage = extract_token_usage(raw_response)
+        comp_tokens = usage.get("completion_tokens", 0)
+        if not has_tool_calls and not response_text.strip():
+            if comp_tokens == 0:
+                msg = f"Zero completion tokens generated (Prompt: {usage.get('prompt_tokens', 0)}, Completion: 0, Provider: {provider})."
                 logger.warning(f"[{model}] [Anomaly] {msg}")
                 add_anomaly_to_state(model, msg)
 
@@ -1682,6 +1704,10 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                 translation_buffer = ""
                                 tool_call_acc = {"calls": {}}
                                 terminal_emitted = False
+                                has_thoughts = False
+                                has_tool_calls = False
+                                finish_reasons = set()
+
                                 async for chunk in iter_bytes():
                                     if chunk in (b": ping\n\n", b"data: {}\n\n"):
                                         yield chunk
@@ -1696,6 +1722,34 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                         pass
 
                                     if chunk_str:
+                                        if (
+                                            '"thought": true' in chunk_str
+                                            or '"thought":true' in chunk_str
+                                            or "reasoning_content" in chunk_str
+                                        ):
+                                            has_thoughts = True
+                                        if (
+                                            '"functionCall"' in chunk_str
+                                            or '"functionCalls"' in chunk_str
+                                            or '"tool_calls"' in chunk_str
+                                        ):
+                                            has_tool_calls = True
+                                        if (
+                                            '"finishReason"' in chunk_str
+                                            or '"finish_reason"' in chunk_str
+                                        ):
+                                            fr_match = re.search(
+                                                r'"finishReason"\s*:\s*"([^"]+)"',
+                                                chunk_str,
+                                            ) or re.search(
+                                                r'"finish_reason"\s*:\s*"([^"]+)"',
+                                                chunk_str,
+                                            )
+                                            if fr_match:
+                                                finish_reasons.add(
+                                                    fr_match.group(1).upper()
+                                                )
+
                                         try:
                                             text_part = extract_text_from_chunk(
                                                 chunk_str, provider_name
@@ -1794,6 +1848,56 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                         '"role":"model"},"index":0,"finishReason":"STOP"}]}'
                                     )
                                     yield f"{terminal_chunk}\n\n".encode("utf-8")
+
+                                # --- Stream integrity validation & anomaly detection ---
+                                resp_text_clean = "".join(response_text_buffer).strip()
+                                raw_resp = b"".join(raw_chunks_buffer)
+                                usage = extract_token_usage(raw_resp)
+                                comp_tokens = usage.get("completion_tokens", 0)
+                                chunks_count = len(raw_chunks_buffer)
+
+                                if not has_tool_calls and not resp_text_clean:
+                                    if (
+                                        "MALFORMED_FUNCTION_CALL" in finish_reasons
+                                        or "MALFORMED" in str(finish_reasons).upper()
+                                    ):
+                                        err_msg = "Model stream ended with malformed function call (MALFORMED_FUNCTION_CALL)."
+                                        logger.error(
+                                            f"[{candidate_model}] [vpn#{actual_vpn_index}] InvalidStreamError: {err_msg}"
+                                        )
+                                        add_anomaly_to_state(
+                                            candidate_model,
+                                            f"InvalidStreamError: {err_msg}",
+                                        )
+                                        raise InvalidStreamError(
+                                            err_msg, "MALFORMED_FUNCTION_CALL"
+                                        )
+
+                                    if has_thoughts:
+                                        err_msg = f"Model stream ended with empty response text but contained reasoning thoughts (chunks: {chunks_count}, completion_tokens: {comp_tokens})."
+                                        logger.error(
+                                            f"[{candidate_model}] [vpn#{actual_vpn_index}] InvalidStreamError: THINKING_ONLY_RESPONSE ({err_msg})"
+                                        )
+                                        add_anomaly_to_state(
+                                            candidate_model,
+                                            f"InvalidStreamError: {err_msg}",
+                                        )
+                                        raise InvalidStreamError(
+                                            err_msg, "THINKING_ONLY_RESPONSE"
+                                        )
+
+                                    if comp_tokens == 0 or chunks_count <= 3:
+                                        err_msg = f"Model stream ended with 0 completion tokens and no content (chunks: {chunks_count}, completion_tokens: {comp_tokens})."
+                                        logger.error(
+                                            f"[{candidate_model}] [vpn#{actual_vpn_index}] InvalidStreamError: ZERO_COMPLETION_TOKENS ({err_msg})"
+                                        )
+                                        add_anomaly_to_state(
+                                            candidate_model,
+                                            f"InvalidStreamError: {err_msg}",
+                                        )
+                                        raise InvalidStreamError(
+                                            err_msg, "ZERO_COMPLETION_TOKENS"
+                                        )
 
                             async for trans_chunk in iter_translated_chunks():
                                 yield trans_chunk
