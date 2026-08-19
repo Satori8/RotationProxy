@@ -189,7 +189,7 @@
   "parallel_tunnels_count": 3,
   "per_channel_delay": 0.5,
   "filter_context": true,
-  "connect_timeout": 15.0,
+  "connect_timeout": 30.0,
   "read_timeout": 180.0,
   "enable_model_rotation": false,
   "compactor_compact_tools": true,
