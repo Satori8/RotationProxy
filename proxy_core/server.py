@@ -238,27 +238,31 @@ async def vpn_heartbeat_loop(app):
                     f"[Heartbeat] VPN {i} check failed: {e} (Consecutive: {VPN_CONSECUTIVE_FAILURES[i]})"
                 )
 
-                # Step 1: Immediate Route Addition (only if system VPN is not active)
-                if not system_vpn_active:
-                    if_index = await asyncio.to_thread(get_interface_index, f"vpn{i}")
-                    if if_index:
-                        await asyncio.to_thread(
-                            subprocess.run,
-                            [
-                                "route",
-                                "ADD",
-                                "0.0.0.0",
-                                "MASK",
-                                "0.0.0.0",
-                                "10.8.0.1",
-                                "METRIC",
-                                "50",
-                                "IF",
-                                if_index,
-                            ],
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
+                # Step 1: Immediate Route Addition (only if system VPN is not active and no active streams)
+                if not system_vpn_active and VPN_CONSECUTIVE_FAILURES[i] >= 3:
+                    active_streams = ACTIVE_STREAMS_PER_VPN.get(i, 0)
+                    if active_streams == 0:
+                        if_index = await asyncio.to_thread(
+                            get_interface_index, f"vpn{i}"
                         )
+                        if if_index:
+                            await asyncio.to_thread(
+                                subprocess.run,
+                                [
+                                    "route",
+                                    "ADD",
+                                    "0.0.0.0",
+                                    "MASK",
+                                    "0.0.0.0",
+                                    "10.8.0.1",
+                                    "METRIC",
+                                    "50",
+                                    "IF",
+                                    if_index,
+                                ],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                            )
 
                 # Step 2: Service Restart & Cooldown
                 if VPN_CONSECUTIVE_FAILURES[i] >= 5:
@@ -1603,38 +1607,63 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         ACTIVE_STREAMS_PER_VPN[actual_vpn_index] = (
                             ACTIVE_STREAMS_PER_VPN.get(actual_vpn_index, 0) + 1
                         )
+                        chunk_queue = asyncio.Queue(maxsize=100)
+                        reader_task = None
+
+                        async def upstream_reader():
+                            try:
+                                async for chunk in response.aiter_bytes():
+                                    await chunk_queue.put(("chunk", chunk))
+                                await chunk_queue.put(("eof", None))
+                            except (httpx.ReadError, httpx.HTTPError) as he:
+                                logger.error(
+                                    f"[{candidate_model}] [vpn#{actual_vpn_index}] Upstream stream read error (abrupt disconnect or timeout): {he}"
+                                )
+                                await chunk_queue.put(("error", he))
+                            except asyncio.CancelledError:
+                                logger.warning(
+                                    f"[{candidate_model}] [vpn#{actual_vpn_index}] Upstream reader cancelled."
+                                )
+                                await chunk_queue.put(("eof", None))
+                            except Exception as se:
+                                logger.error(
+                                    f"[{candidate_model}] [vpn#{actual_vpn_index}] Unexpected stream exception: {se}"
+                                )
+                                await chunk_queue.put(("error", se))
+
                         try:
+                            reader_task = asyncio.create_task(upstream_reader())
 
                             async def iter_bytes():
                                 try:
-                                    chunk_iter = response.aiter_bytes().__aiter__()
                                     while True:
+                                        cfg = load_rotation_config()
+                                        timeout_val = (
+                                            15.0
+                                            if cfg.get("sse_keepalive", True)
+                                            else None
+                                        )
                                         try:
-                                            cfg = load_rotation_config()
-                                            timeout_val = (
-                                                5.0
-                                                if cfg.get("sse_keepalive", True)
-                                                else None
-                                            )
                                             if timeout_val:
-                                                chunk = await asyncio.wait_for(
-                                                    chunk_iter.__anext__(),
+                                                msg_type, data = await asyncio.wait_for(
+                                                    chunk_queue.get(),
                                                     timeout=timeout_val,
                                                 )
                                             else:
-                                                chunk = await chunk_iter.__anext__()
-                                            raw_chunks_buffer.append(chunk)
-                                            yield chunk
+                                                msg_type, data = await chunk_queue.get()
                                         except asyncio.TimeoutError:
                                             # Send SSE comment ping to keep TCP socket & OpenCode idle timer alive
+                                            # Reader task is NOT cancelled because it runs independently!
                                             yield b": ping\n\n"
-                                        except StopAsyncIteration:
+                                            continue
+
+                                        if msg_type == "chunk":
+                                            raw_chunks_buffer.append(data)
+                                            yield data
+                                        elif msg_type == "eof":
                                             break
-                                except (httpx.ReadError, httpx.HTTPError) as he:
-                                    logger.error(
-                                        f"[{candidate_model}] [vpn#{actual_vpn_index}] Upstream stream read error (abrupt disconnect or timeout): {he}"
-                                    )
-                                    raise  # Propagate to prevent silent 200 OK on failure
+                                        elif msg_type == "error":
+                                            raise data
                                 except asyncio.CancelledError:
                                     logger.warning(
                                         f"[{candidate_model}] [vpn#{actual_vpn_index}] Stream transmission cancelled by client (OpenCode disconnected)."
@@ -1776,6 +1805,8 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                             )
                             raise
                         finally:
+                            if reader_task and not reader_task.done():
+                                reader_task.cancel()
                             ACTIVE_STREAMS_PER_VPN[actual_vpn_index] = max(
                                 0,
                                 ACTIVE_STREAMS_PER_VPN.get(actual_vpn_index, 0) - 1,
