@@ -30,6 +30,7 @@ from proxy_core.state import (
     CONSECUTIVE_RPD_429S,
     LAST_USED,
     LAST_REQUEST_TIME,
+    ACTIVE_STREAMS_PER_VPN,
 )
 from proxy_core.rotation import (
     API_KEYS,
@@ -261,6 +262,14 @@ async def vpn_heartbeat_loop(app):
 
                 # Step 2: Service Restart & Cooldown
                 if VPN_CONSECUTIVE_FAILURES[i] >= 5:
+                    active_streams = ACTIVE_STREAMS_PER_VPN.get(i, 0)
+                    if active_streams > 0:
+                        logger.warning(
+                            f"[Heartbeat] VPN {i} has {active_streams} active stream(s) in-flight. Postponing restart to prevent stream drop."
+                        )
+                        VPN_GRACE_PERIODS[i] = now + 5.0  # Postpone for 5 seconds
+                        continue
+
                     logger.error(
                         f"[Heartbeat] VPN {i} down for 5s. Triggering service restart..."
                     )
@@ -1590,13 +1599,37 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     raw_chunks_buffer = []
 
                     async def stream_generator():
+                        # Track active in-flight stream on this VPN channel
+                        ACTIVE_STREAMS_PER_VPN[actual_vpn_index] = (
+                            ACTIVE_STREAMS_PER_VPN.get(actual_vpn_index, 0) + 1
+                        )
                         try:
 
                             async def iter_bytes():
                                 try:
-                                    async for chunk in response.aiter_bytes():
-                                        raw_chunks_buffer.append(chunk)
-                                        yield chunk
+                                    chunk_iter = response.aiter_bytes().__aiter__()
+                                    while True:
+                                        try:
+                                            cfg = load_rotation_config()
+                                            timeout_val = (
+                                                5.0
+                                                if cfg.get("sse_keepalive", True)
+                                                else None
+                                            )
+                                            if timeout_val:
+                                                chunk = await asyncio.wait_for(
+                                                    chunk_iter.__anext__(),
+                                                    timeout=timeout_val,
+                                                )
+                                            else:
+                                                chunk = await chunk_iter.__anext__()
+                                            raw_chunks_buffer.append(chunk)
+                                            yield chunk
+                                        except asyncio.TimeoutError:
+                                            # Send SSE comment ping to keep TCP socket & OpenCode idle timer alive
+                                            yield b": ping\n\n"
+                                        except StopAsyncIteration:
+                                            break
                                 except (httpx.ReadError, httpx.HTTPError) as he:
                                     logger.error(
                                         f"[{candidate_model}] [vpn#{actual_vpn_index}] Upstream stream read error (abrupt disconnect or timeout): {he}"
@@ -1618,6 +1651,10 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                 tool_call_acc = {"calls": {}}
                                 terminal_emitted = False
                                 async for chunk in iter_bytes():
+                                    if chunk == b": ping\n\n":
+                                        yield chunk
+                                        continue
+
                                     chunk_str = ""
                                     try:
                                         chunk_str = chunk.decode(
@@ -1739,6 +1776,10 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                             )
                             raise
                         finally:
+                            ACTIVE_STREAMS_PER_VPN[actual_vpn_index] = max(
+                                0,
+                                ACTIVE_STREAMS_PER_VPN.get(actual_vpn_index, 0) - 1,
+                            )
                             await response.aclose()
                             response_text = "".join(response_text_buffer)
                             raw_req_bytes = body

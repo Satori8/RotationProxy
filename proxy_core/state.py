@@ -8,6 +8,7 @@ LAST_429_TIME = {}
 CONSECUTIVE_RPD_429S = {}
 LAST_USED = {}
 LAST_REQUEST_TIME = {}
+ACTIVE_STREAMS_PER_VPN = {i: 0 for i in range(7)}
 
 # Compactor statistics
 COMPACTOR_ORIG_BYTES = 0

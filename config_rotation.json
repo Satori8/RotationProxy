@@ -1,5 +1,5 @@
 {
-  "last_fallback_switch_time": 1786699592.6044962,
+  "last_fallback_switch_time": 1786904287.1730459,
   "primary_model": "gemini-3.6-flash",
   "fallback_model": "gemini-3-flash-preview",
   "model_cooldowns": {},
@@ -201,5 +201,6 @@
   "compactor_inject_guardrails": false,
   "compactor_enable_headroom": false,
   "system_vpn_active": false,
-  "system_vpn_index": 6
+  "system_vpn_index": 6,
+  "sse_keepalive": true
 }

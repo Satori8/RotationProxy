@@ -233,3 +233,17 @@ def test_extract_text_from_chunk():
     )
     extracted3 = extract_text_from_chunk(f"data: {gemini_chunk}", "gemini")
     assert extracted3 == "Gemini response text"
+
+
+def test_sse_keepalive_config_and_stream_tracking():
+    from proxy_core.config import load_rotation_config
+    from proxy_core.state import ACTIVE_STREAMS_PER_VPN
+
+    cfg = load_rotation_config()
+    assert "sse_keepalive" in cfg
+    assert isinstance(cfg["sse_keepalive"], bool)
+
+    # Verify ACTIVE_STREAMS_PER_VPN structure
+    assert isinstance(ACTIVE_STREAMS_PER_VPN, dict)
+    assert 0 in ACTIVE_STREAMS_PER_VPN
+    assert 6 in ACTIVE_STREAMS_PER_VPN

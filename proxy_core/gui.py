@@ -279,6 +279,16 @@ class ProxyGUI(ctk.CTk):
         )
         self.filter_context_checkbox.pack(anchor="w", padx=10, pady=(3, 5))
 
+        self.sse_keepalive_var = ctk.BooleanVar(value=config.get("sse_keepalive", True))
+        self.sse_keepalive_checkbox = ctk.CTkCheckBox(
+            self.left_panel,
+            text="SSE Keep-Alive",
+            variable=self.sse_keepalive_var,
+            command=self.on_sse_keepalive_toggle,
+            font=ctk.CTkFont(size=10, weight="bold"),
+        )
+        self.sse_keepalive_checkbox.pack(anchor="w", padx=10, pady=(3, 3))
+
         self.model_rotation_var = ctk.BooleanVar(
             value=config.get("enable_model_rotation", False)
         )
@@ -782,6 +792,13 @@ class ProxyGUI(ctk.CTk):
         config["filter_context"] = val
         save_rotation_config(config)
         logger.info(f"Filter context set to: {val}")
+
+    def on_sse_keepalive_toggle(self):
+        config = load_rotation_config()
+        val = self.sse_keepalive_var.get()
+        config["sse_keepalive"] = val
+        save_rotation_config(config)
+        logger.info(f"SSE Keep-Alive set to: {val}")
 
     def on_model_rotation_toggle(self):
         config = load_rotation_config()
