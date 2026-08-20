@@ -869,9 +869,9 @@ def inject_tool_guardrails(data):
 
 def strip_historical_thoughts_from_contents(data):
     """
-    Google Gemini 2.5 / 3.7 explicitly documents that `thought: true` chunks returned during
-    streaming should NOT be passed back in subsequent `contents` requests. Sending past thoughts
-    confuses the model's reasoning termination logic and causes premature STOP finishReason.
+    Strips bulky reasoning thought text from historical model turns in outgoing requests
+    while preserving cryptographic thought signatures (thoughtSignature / thought_signature)
+    and thought markers required by Google Gemini API to maintain multi-turn validation.
     """
     if "contents" in data and isinstance(data["contents"], list):
         for msg in data["contents"]:
@@ -880,13 +880,31 @@ def strip_historical_thoughts_from_contents(data):
                 and "parts" in msg
                 and isinstance(msg["parts"], list)
             ):
-                non_thought_parts = [
-                    p
-                    for p in msg["parts"]
-                    if not (isinstance(p, dict) and p.get("thought") is True)
-                ]
-                if non_thought_parts:
-                    msg["parts"] = non_thought_parts
+                new_parts = []
+                for p in msg["parts"]:
+                    if isinstance(p, dict):
+                        is_thought = (
+                            p.get("thought") is True or p.get("thought") == True
+                        )
+                        has_signature = (
+                            "thoughtSignature" in p or "thought_signature" in p
+                        )
+
+                        if is_thought or has_signature:
+                            if has_signature:
+                                # Preserve the thought signature and marker while stripping the bulky thought text
+                                sig_part = {
+                                    k: v for k, v in p.items() if k not in ("text",)
+                                }
+                                sig_part["thought"] = True
+                                sig_part["text"] = ""
+                                new_parts.append(sig_part)
+                            # If it's a thought part without a signature, omit it to save tokens
+                        else:
+                            new_parts.append(p)
+
+                if new_parts:
+                    msg["parts"] = new_parts
                 else:
                     msg["parts"] = [{"text": ""}]
 
@@ -895,6 +913,8 @@ def strip_historical_thoughts_from_contents(data):
             if msg.get("role") == "assistant":
                 if "reasoning_content" in msg:
                     del msg["reasoning_content"]
+                if "reasoning" in msg:
+                    del msg["reasoning"]
 
     return data
 

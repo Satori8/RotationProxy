@@ -316,3 +316,71 @@ def test_sse_keepalive_config_and_stream_tracking():
     assert isinstance(ACTIVE_STREAMS_PER_VPN, dict)
     assert 0 in ACTIVE_STREAMS_PER_VPN
     assert 6 in ACTIVE_STREAMS_PER_VPN
+
+
+def test_strip_historical_thoughts_preserving_signatures():
+    from proxy_core.compactor import strip_historical_thoughts_from_contents
+
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": "Hello, solve this task"}],
+            },
+            {
+                "role": "model",
+                "parts": [
+                    {
+                        "thought": True,
+                        "thoughtSignature": "cryptographic_sig_12345",
+                        "text": "Extremely long reasoning chain taking thousands of tokens...",
+                    },
+                    {
+                        "thought": True,
+                        "text": "Another thought part without signature",
+                    },
+                    {
+                        "text": "Here is the final solution to your task.",
+                    },
+                    {
+                        "functionCall": {
+                            "name": "lookup",
+                            "args": {"query": "test"},
+                        }
+                    },
+                ],
+            },
+        ],
+        "messages": [
+            {
+                "role": "assistant",
+                "content": "OpenAI answer",
+                "reasoning_content": "Long OpenAI reasoning",
+            }
+        ],
+    }
+
+    result = strip_historical_thoughts_from_contents(payload)
+
+    # Verify Gemini contents
+    model_parts = result["contents"][1]["parts"]
+    # 1. Thought with signature should have text stripped to "" and signature preserved
+    sig_part = next((p for p in model_parts if "thoughtSignature" in p), None)
+    assert sig_part is not None
+    assert sig_part["thought"] is True
+    assert sig_part["thoughtSignature"] == "cryptographic_sig_12345"
+    assert sig_part["text"] == ""
+
+    # 2. Thought without signature should be stripped
+    assert not any(
+        p.get("text") == "Another thought part without signature" for p in model_parts
+    )
+
+    # 3. Regular text and functionCall parts must remain intact
+    assert any(
+        p.get("text") == "Here is the final solution to your task." for p in model_parts
+    )
+    assert any("functionCall" in p for p in model_parts)
+
+    # Verify OpenAI messages reasoning stripped
+    assert "reasoning_content" not in result["messages"][0]
