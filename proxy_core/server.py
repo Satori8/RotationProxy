@@ -1696,7 +1696,10 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         current_response = response
                         current_body = body
                         auto_continue_count = 0
-                        max_auto_continues = 2
+                        cfg_active = load_rotation_config()
+                        max_auto_continues = int(
+                            cfg_active.get("max_auto_continues", 2)
+                        )
 
                         translation_buffer = ""
                         tool_call_acc = {"calls": {}}
@@ -1748,16 +1751,18 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                             )
                                             try:
                                                 if timeout_val:
-                                                    msg_type, data = (
-                                                        await asyncio.wait_for(
-                                                            chunk_queue.get(),
-                                                            timeout=timeout_val,
-                                                        )
+                                                    (
+                                                        msg_type,
+                                                        data,
+                                                    ) = await asyncio.wait_for(
+                                                        chunk_queue.get(),
+                                                        timeout=timeout_val,
                                                     )
                                                 else:
-                                                    msg_type, data = (
-                                                        await chunk_queue.get()
-                                                    )
+                                                    (
+                                                        msg_type,
+                                                        data,
+                                                    ) = await chunk_queue.get()
                                             except asyncio.TimeoutError:
                                                 if is_gemini_client:
                                                     yield b"data: {}\n\n"
@@ -1826,8 +1831,10 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                                 )
 
                                         try:
-                                            sigs = extract_thought_signatures_from_chunk(
-                                                chunk_str, provider_name
+                                            sigs = (
+                                                extract_thought_signatures_from_chunk(
+                                                    chunk_str, provider_name
+                                                )
                                             )
                                             for sig in sigs:
                                                 if sig not in thought_signatures:
@@ -1840,9 +1847,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                                 chunk_str, provider_name
                                             )
                                             if thought_part:
-                                                thought_text_buffer.append(
-                                                    thought_part
-                                                )
+                                                thought_text_buffer.append(thought_part)
                                         except Exception:
                                             pass
 
@@ -1937,10 +1942,16 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                             else "EMPTY_RESPONSE"
                                         )
                                     )
-                                    logger.info(
-                                        f"[{candidate_model}] [vpn#{actual_vpn_index}] [Auto-Continue #{auto_continue_count}] "
-                                        f"Triggered (reason: {trigger_reason}, thoughts: {len(thought_text_clean)} chars, text: {len(resp_text_clean)} chars). Requesting continuation..."
+                                    auto_cont_msg = (
+                                        f"[{candidate_model}] [vpn#{actual_vpn_index}] [Auto-Continue] "
+                                        f"Invoking continuation hop #{auto_continue_count}/{max_auto_continues} "
+                                        f"(reason: {trigger_reason}, thoughts: {len(thought_text_clean)} chars, text: {len(resp_text_clean)} chars)..."
                                     )
+                                    logger.info(auto_cont_msg)
+                                    try:
+                                        global_log_queue.put(auto_cont_msg)
+                                    except Exception:
+                                        pass
 
                                     try:
                                         orig_payload_dict = json.loads(
@@ -2000,10 +2011,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                     break
 
                             # Flush any line still buffered when the stream ends
-                            if (
-                                needs_gemini_response_translation
-                                and translation_buffer
-                            ):
+                            if needs_gemini_response_translation and translation_buffer:
                                 line_stripped = translation_buffer.strip()
                                 if line_stripped:
                                     try:

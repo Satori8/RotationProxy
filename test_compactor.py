@@ -449,9 +449,7 @@ def test_split_merged_functioncall_text_parts():
 
     # Unmerged parts pass through untouched
     assert model_parts[4] == {"text": "normal answer"}
-    assert model_parts[5] == {
-        "inlineData": {"mimeType": "image/png", "data": "base64"}
-    }
+    assert model_parts[5] == {"inlineData": {"mimeType": "image/png", "data": "base64"}}
 
 
 def test_auto_continue_config_default():
@@ -460,6 +458,9 @@ def test_auto_continue_config_default():
     cfg = load_rotation_config()
     assert "auto_continue" in cfg
     assert isinstance(cfg["auto_continue"], bool)
+    assert "max_auto_continues" in cfg
+    assert isinstance(cfg["max_auto_continues"], int)
+    assert 1 <= cfg["max_auto_continues"] <= 5
 
 
 def test_extract_thought_signatures_from_chunk():

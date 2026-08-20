@@ -84,6 +84,10 @@ def load_rotation_config() -> dict:
                 config["auto_continue"] = True
                 needs_upgrade = True
 
+            if "max_auto_continues" not in config:
+                config["max_auto_continues"] = 2
+                needs_upgrade = True
+
             # VPN Config Upgrade
             if "vpn_switching_mode" not in config:
                 config["vpn_switching_mode"] = "disabled"
@@ -131,6 +135,7 @@ def load_rotation_config() -> dict:
         "save_chat_logs": False,
         "filter_context": True,
         "auto_continue": True,
+        "max_auto_continues": 2,
         "vpn_switching_mode": "disabled",
         "vpn_static_channel": 0,
         "vpn_errors_threshold": 5,

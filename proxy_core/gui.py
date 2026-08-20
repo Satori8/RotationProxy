@@ -297,7 +297,28 @@ class ProxyGUI(ctk.CTk):
             command=self.on_auto_continue_toggle,
             font=ctk.CTkFont(size=10, weight="bold"),
         )
-        self.auto_continue_checkbox.pack(anchor="w", padx=10, pady=(3, 3))
+        self.auto_continue_checkbox.pack(anchor="w", padx=10, pady=(3, 1))
+
+        self.max_auto_continue_frame = ctk.CTkFrame(
+            self.left_panel, fg_color="transparent"
+        )
+        self.max_auto_continue_frame.pack(fill="x", padx=10, pady=(0, 3))
+
+        self.max_auto_continue_label = ctk.CTkLabel(
+            self.max_auto_continue_frame,
+            text="Max Continues:",
+            font=ctk.CTkFont(size=10),
+        )
+        self.max_auto_continue_label.pack(side="left", padx=(0, 5))
+        self.max_auto_continue_dropdown = ctk.CTkOptionMenu(
+            self.max_auto_continue_frame,
+            values=["1", "2", "3", "4", "5"],
+            width=60,
+            height=22,
+            command=self.on_max_auto_continues_change,
+        )
+        self.max_auto_continue_dropdown.set(str(config.get("max_auto_continues", 2)))
+        self.max_auto_continue_dropdown.pack(side="left")
 
         self.model_rotation_var = ctk.BooleanVar(
             value=config.get("enable_model_rotation", False)
@@ -815,6 +836,16 @@ class ProxyGUI(ctk.CTk):
         cfg["auto_continue"] = self.auto_continue_var.get()
         save_rotation_config(cfg)
         logger.info(f"[GUI] Auto-Continue set to {cfg['auto_continue']}")
+
+    def on_max_auto_continues_change(self, val):
+        try:
+            cfg = load_rotation_config()
+            cfg["max_auto_continues"] = int(val)
+            save_rotation_config(cfg)
+            logger.info(f"[GUI] Max Auto-Continues set to {val}")
+            log_queue.put(f"[GUI] Max Auto-Continues set to {val}")
+        except Exception as e:
+            logger.error(f"[GUI] Failed to set max_auto_continues: {e}")
 
     def on_model_rotation_toggle(self):
         config = load_rotation_config()

@@ -206,5 +206,6 @@
   "system_vpn_active": false,
   "system_vpn_index": 6,
   "sse_keepalive": true,
-  "auto_continue": true
+  "auto_continue": true,
+  "max_auto_continues": 2
 }
