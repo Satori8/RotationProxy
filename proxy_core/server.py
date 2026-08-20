@@ -55,6 +55,7 @@ from proxy_core.helpers import (
     get_requested_model,
     extract_chat_messages,
     extract_text_from_chunk,
+    extract_thought_from_chunk,
     extract_token_usage,
     get_next_log_index,
     write_chat_log,
@@ -450,6 +451,9 @@ async def analyze_response_for_anomalies(
         has_valid_json = False
         has_data_lines = False
         has_tool_calls = False
+        has_thoughts = False
+        extracted_text_parts = []
+        extracted_thought_parts = []
 
         lines = raw_response.decode("utf-8", errors="ignore").split("\n")
         for line in lines:
@@ -476,10 +480,19 @@ async def analyze_response_for_anomalies(
                         content = cand.get("content", {})
                         parts = content.get("parts", [])
                         for part in parts:
-                            if isinstance(part, dict) and (
-                                "functionCall" in part or "functionCalls" in part
-                            ):
-                                has_tool_calls = True
+                            if isinstance(part, dict):
+                                if "functionCall" in part or "functionCalls" in part:
+                                    has_tool_calls = True
+                                is_thought = (
+                                    part.get("thought") is True
+                                    or part.get("thought") == True
+                                )
+                                if is_thought:
+                                    has_thoughts = True
+                                    if "text" in part and part["text"]:
+                                        extracted_thought_parts.append(part["text"])
+                                elif "text" in part and part["text"]:
+                                    extracted_text_parts.append(part["text"])
 
                     # Check OpenAI format
                     choices = data.get("choices", [])
@@ -490,6 +503,17 @@ async def analyze_response_for_anomalies(
                         delta = choice.get("delta", {})
                         if "tool_calls" in delta or "tool_calls" in choice:
                             has_tool_calls = True
+                        if "reasoning_content" in delta and delta["reasoning_content"]:
+                            has_thoughts = True
+                            extracted_thought_parts.append(delta["reasoning_content"])
+                        elif "reasoning" in delta and delta["reasoning"]:
+                            has_thoughts = True
+                            extracted_thought_parts.append(delta["reasoning"])
+                        elif "thought" in delta and delta["thought"]:
+                            has_thoughts = True
+                            extracted_thought_parts.append(delta["thought"])
+                        if "content" in delta and delta["content"]:
+                            extracted_text_parts.append(delta["content"])
                 except Exception:
                     pass
             else:
@@ -506,10 +530,22 @@ async def analyze_response_for_anomalies(
                             content = cand.get("content", {})
                             parts = content.get("parts", [])
                             for part in parts:
-                                if isinstance(part, dict) and (
-                                    "functionCall" in part or "functionCalls" in part
-                                ):
-                                    has_tool_calls = True
+                                if isinstance(part, dict):
+                                    if (
+                                        "functionCall" in part
+                                        or "functionCalls" in part
+                                    ):
+                                        has_tool_calls = True
+                                    is_thought = (
+                                        part.get("thought") is True
+                                        or part.get("thought") == True
+                                    )
+                                    if is_thought:
+                                        has_thoughts = True
+                                        if "text" in part and part["text"]:
+                                            extracted_thought_parts.append(part["text"])
+                                    elif "text" in part and part["text"]:
+                                        extracted_text_parts.append(part["text"])
                         choices = data.get("choices", [])
                         for choice in choices:
                             fr = choice.get("finish_reason")
@@ -518,22 +554,48 @@ async def analyze_response_for_anomalies(
                             delta = choice.get("delta", {})
                             if "tool_calls" in delta or "tool_calls" in choice:
                                 has_tool_calls = True
+                            if (
+                                "reasoning_content" in delta
+                                and delta["reasoning_content"]
+                            ):
+                                has_thoughts = True
+                                extracted_thought_parts.append(
+                                    delta["reasoning_content"]
+                                )
+                            elif "reasoning" in delta and delta["reasoning"]:
+                                has_thoughts = True
+                                extracted_thought_parts.append(delta["reasoning"])
+                            elif "thought" in delta and delta["thought"]:
+                                has_thoughts = True
+                                extracted_thought_parts.append(delta["thought"])
+                            if "content" in delta and delta["content"]:
+                                extracted_text_parts.append(delta["content"])
                     except Exception:
                         pass
 
+        clean_resp_text = (
+            response_text.strip()
+            if response_text
+            else "".join(extracted_text_parts).strip()
+        )
+        clean_thoughts = "".join(extracted_thought_parts).strip()
+
         # Check if accumulated text is empty (only if there are no tool calls)
-        if not response_text or not response_text.strip():
+        if not clean_resp_text:
             if not has_tool_calls:
-                msg = (
-                    f"Response text is empty or only whitespace (Provider: {provider})."
-                )
-                logger.warning(f"[{model}] [Anomaly] {msg}")
-                add_anomaly_to_state(model, msg)
+                if has_thoughts or clean_thoughts:
+                    msg = f"Model response contained only reasoning thoughts ({len(clean_thoughts)} chars) with empty answer text (Provider: {provider})."
+                    logger.warning(f"[{model}] [Anomaly] {msg}")
+                    add_anomaly_to_state(model, msg)
+                else:
+                    msg = f"Response text is empty or only whitespace (Provider: {provider})."
+                    logger.warning(f"[{model}] [Anomaly] {msg}")
+                    add_anomaly_to_state(model, msg)
 
         # Check token usage anomalies
         usage = extract_token_usage(raw_response)
         comp_tokens = usage.get("completion_tokens", 0)
-        if not has_tool_calls and not response_text.strip():
+        if not has_tool_calls and not clean_resp_text and not clean_thoughts:
             if comp_tokens == 0:
                 msg = f"Zero completion tokens generated (Prompt: {usage.get('prompt_tokens', 0)}, Completion: 0, Provider: {provider})."
                 logger.warning(f"[{model}] [Anomaly] {msg}")
@@ -1971,8 +2033,8 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                     try:
                         await response.aread()
                         resp_text = truncate_thought_signature(response.text)
-                    except Exception as re:
-                        resp_text = f"<Failed to read response body: {re}>"
+                    except Exception as exc:
+                        resp_text = f"<Failed to read response body: {exc}>"
                     await response.aclose()
 
                     # Trigger safety check for model/server errors

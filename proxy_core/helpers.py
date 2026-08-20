@@ -100,7 +100,9 @@ def extract_chat_messages(body: bytes) -> list:
     return []
 
 
-def extract_text_from_chunk(chunk_str: str, provider: str) -> str:
+def extract_text_from_chunk(
+    chunk_str: str, provider: str, include_thoughts: bool = False
+) -> str:
     extracted_texts = []
     lines = chunk_str.split("\n")
     for line in lines:
@@ -120,8 +122,12 @@ def extract_text_from_chunk(chunk_str: str, provider: str) -> str:
                     parts = content.get("parts", [])
                     for p in parts:
                         if isinstance(p, dict):
+                            is_thought = (
+                                p.get("thought") is True or p.get("thought") == True
+                            )
                             if "text" in p and p["text"]:
-                                extracted_texts.append(p["text"])
+                                if not is_thought or include_thoughts:
+                                    extracted_texts.append(p["text"])
                             elif "functionCall" in p or "function_call" in p:
                                 fc = p.get("functionCall") or p.get("function_call")
                                 if isinstance(fc, dict):
@@ -134,13 +140,14 @@ def extract_text_from_chunk(chunk_str: str, provider: str) -> str:
                     delta = choices[0].get("delta") or choices[0].get("message") or {}
                     if "content" in delta and delta["content"]:
                         extracted_texts.append(delta["content"])
-                    elif "reasoning_content" in delta and delta["reasoning_content"]:
-                        extracted_texts.append(delta["reasoning_content"])
-                    elif "reasoning" in delta and delta["reasoning"]:
-                        extracted_texts.append(delta["reasoning"])
-                    elif "thought" in delta and delta["thought"]:
-                        extracted_texts.append(delta["thought"])
-                    elif "tool_calls" in delta and delta["tool_calls"]:
+                    if include_thoughts:
+                        if "reasoning_content" in delta and delta["reasoning_content"]:
+                            extracted_texts.append(delta["reasoning_content"])
+                        elif "reasoning" in delta and delta["reasoning"]:
+                            extracted_texts.append(delta["reasoning"])
+                        elif "thought" in delta and delta["thought"]:
+                            extracted_texts.append(delta["thought"])
+                    if "tool_calls" in delta and delta["tool_calls"]:
                         for tc in delta["tool_calls"]:
                             if isinstance(tc, dict):
                                 fn = tc.get("function", {})
@@ -151,6 +158,46 @@ def extract_text_from_chunk(chunk_str: str, provider: str) -> str:
         except Exception:
             pass
     return "".join(extracted_texts)
+
+
+def extract_thought_from_chunk(chunk_str: str, provider: str) -> str:
+    extracted_thoughts = []
+    lines = chunk_str.split("\n")
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("data:"):
+            line = line[5:].strip()
+        if line == "[DONE]":
+            continue
+        try:
+            data = json.loads(line)
+            if provider == "gemini" or "candidates" in data:
+                candidates = data.get("candidates", [])
+                if candidates:
+                    content = candidates[0].get("content", {})
+                    parts = content.get("parts", [])
+                    for p in parts:
+                        if isinstance(p, dict):
+                            is_thought = (
+                                p.get("thought") is True or p.get("thought") == True
+                            )
+                            if is_thought and "text" in p and p["text"]:
+                                extracted_thoughts.append(p["text"])
+            else:
+                choices = data.get("choices", [])
+                if choices:
+                    delta = choices[0].get("delta") or choices[0].get("message") or {}
+                    if "reasoning_content" in delta and delta["reasoning_content"]:
+                        extracted_thoughts.append(delta["reasoning_content"])
+                    elif "reasoning" in delta and delta["reasoning"]:
+                        extracted_thoughts.append(delta["reasoning"])
+                    elif "thought" in delta and delta["thought"]:
+                        extracted_thoughts.append(delta["thought"])
+        except Exception:
+            pass
+    return "".join(extracted_thoughts)
 
 
 def extract_token_usage(raw_response: bytes) -> dict:

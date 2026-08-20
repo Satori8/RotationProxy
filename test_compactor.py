@@ -1,9 +1,11 @@
 import json
+import pytest
 from proxy_core.helpers import (
     translate_openai_chunk_to_gemini,
     flush_tool_calls_to_gemini,
     translate_payload_to_openai,
     extract_text_from_chunk,
+    extract_thought_from_chunk,
 )
 
 
@@ -220,12 +222,16 @@ def test_extract_text_from_chunk():
     extracted1 = extract_text_from_chunk(f"data: {openai_content_chunk}", "openai")
     assert extracted1 == "Hello World"
 
-    # OpenAI chunk with reasoning_content
+    # OpenAI chunk with reasoning_content (should be excluded by default)
     openai_reasoning_chunk = json.dumps(
         {"choices": [{"delta": {"reasoning_content": "Thinking process"}}]}
     )
     extracted2 = extract_text_from_chunk(f"data: {openai_reasoning_chunk}", "openai")
-    assert extracted2 == "Thinking process"
+    assert extracted2 == ""
+    extracted2_with_thoughts = extract_text_from_chunk(
+        f"data: {openai_reasoning_chunk}", "openai", include_thoughts=True
+    )
+    assert extracted2_with_thoughts == "Thinking process"
 
     # Gemini chunk with text part
     gemini_chunk = json.dumps(
@@ -233,6 +239,69 @@ def test_extract_text_from_chunk():
     )
     extracted3 = extract_text_from_chunk(f"data: {gemini_chunk}", "gemini")
     assert extracted3 == "Gemini response text"
+
+    # Gemini chunk with thought part (should be excluded by default)
+    gemini_thought_chunk = json.dumps(
+        {
+            "candidates": [
+                {"content": {"parts": [{"text": "Internal thoughts", "thought": True}]}}
+            ]
+        }
+    )
+    extracted4 = extract_text_from_chunk(f"data: {gemini_thought_chunk}", "gemini")
+    assert extracted4 == ""
+    extracted4_with_thoughts = extract_text_from_chunk(
+        f"data: {gemini_thought_chunk}", "gemini", include_thoughts=True
+    )
+    assert extracted4_with_thoughts == "Internal thoughts"
+
+
+def test_extract_thought_from_chunk():
+    # OpenAI reasoning chunk
+    openai_reasoning_chunk = json.dumps(
+        {"choices": [{"delta": {"reasoning_content": "Reasoning steps"}}]}
+    )
+    assert (
+        extract_thought_from_chunk(f"data: {openai_reasoning_chunk}", "openai")
+        == "Reasoning steps"
+    )
+
+    # Gemini thought chunk
+    gemini_thought_chunk = json.dumps(
+        {
+            "candidates": [
+                {"content": {"parts": [{"text": "Gemini thought", "thought": True}]}}
+            ]
+        }
+    )
+    assert (
+        extract_thought_from_chunk(f"data: {gemini_thought_chunk}", "gemini")
+        == "Gemini thought"
+    )
+
+
+@pytest.mark.asyncio
+async def test_anomaly_detection_thoughts_only():
+    from proxy_core.server import analyze_response_for_anomalies
+    from proxy_core.state import RECENT_ANOMALIES
+
+    RECENT_ANOMALIES.clear()
+
+    # Raw response with only thought chunks
+    raw_thought_resp = (
+        b'data: {"candidates":[{"content":{"parts":[{"text":"Thinking only","thought":true}]},"index":0}]}\n\n'
+        b'data: {"candidates":[{"content":{"parts":[]},"finishReason":"STOP","index":0}]}\n\n'
+    )
+
+    await analyze_response_for_anomalies(
+        raw_response=raw_thought_resp,
+        response_text="",
+        model="gemini-2.5-flash",
+        provider="gemini",
+    )
+
+    assert len(RECENT_ANOMALIES) > 0
+    assert any("contained only reasoning thoughts" in msg for msg in RECENT_ANOMALIES)
 
 
 def test_sse_keepalive_config_and_stream_tracking():

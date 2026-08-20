@@ -903,6 +903,7 @@ def normalize_thinking_config(data):
     """
     Normalizes thinkingConfig in generationConfig:
     - Replaces invalid 'budgetTokens' key with valid 'thinkingBudget'.
+    - Removes 'thinkingLevel' if 'thinkingBudget' is also present (API only allows one).
     """
     if "generationConfig" in data and isinstance(data["generationConfig"], dict):
         gc = data["generationConfig"]
@@ -914,6 +915,12 @@ def normalize_thinking_config(data):
                 logger.debug(
                     f"[Compactor] Normalized thinkingConfig.budgetTokens -> thinkingBudget: {budget}"
                 )
+            # Gemini API only allows one of thinkingBudget or thinkingLevel
+            if "thinkingBudget" in tc and "thinkingLevel" in tc:
+                logger.debug(
+                    "[Compactor] Removing thinkingLevel since thinkingBudget is also set (API only allows one)"
+                )
+                tc.pop("thinkingLevel", None)
 
     return data
 
