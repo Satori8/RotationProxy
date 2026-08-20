@@ -348,6 +348,13 @@ def test_strip_historical_thoughts_preserving_signatures():
                             "args": {"query": "test"},
                         }
                     },
+                    {
+                        "functionCall": {
+                            "name": "read",
+                            "args": {"path": "a.py"},
+                        },
+                        "thoughtSignature": "fc_sig_999",
+                    },
                 ],
             },
         ],
@@ -381,6 +388,21 @@ def test_strip_historical_thoughts_preserving_signatures():
         p.get("text") == "Here is the final solution to your task." for p in model_parts
     )
     assert any("functionCall" in p for p in model_parts)
+
+    # 4. CRITICAL: functionCall part carrying a thoughtSignature must be left
+    #    EXACTLY as-is (no text/thought added) — adding text would violate the
+    #    Part data oneof and trigger "oneof field 'data' is already set".
+    fc_sig_part = next(
+        (p for p in model_parts if p.get("functionCall", {}).get("name") == "read"),
+        None,
+    )
+    assert fc_sig_part is not None
+    assert fc_sig_part == {
+        "functionCall": {"name": "read", "args": {"path": "a.py"}},
+        "thoughtSignature": "fc_sig_999",
+    }
+    assert "text" not in fc_sig_part
+    assert "thought" not in fc_sig_part
 
     # Verify OpenAI messages reasoning stripped
     assert "reasoning_content" not in result["messages"][0]

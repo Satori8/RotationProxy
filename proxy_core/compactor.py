@@ -926,8 +926,15 @@ def strip_historical_thoughts_from_contents(data):
     Strips bulky reasoning thought text from historical model turns in outgoing requests
     while preserving cryptographic thought signatures (thoughtSignature / thought_signature)
     and thought markers required by Google Gemini API to maintain multi-turn validation.
+
+    IMPORTANT: Only parts flagged as actual thoughts (`thought: true`) are stripped.
+    functionCall / text / inlineData parts that merely carry a thoughtSignature are
+    legitimate (Google docs: functionCall parts carry thoughtSignature) and MUST be
+    left untouched — adding `text` to them would violate the Part `data` oneof and
+    trigger "oneof field 'data' is already set. Cannot set 'text'".
     """
     if "contents" in data and isinstance(data["contents"], list):
+        new_contents = []
         for msg in data["contents"]:
             if (
                 msg.get("role") == "model"
@@ -940,27 +947,36 @@ def strip_historical_thoughts_from_contents(data):
                         is_thought = (
                             p.get("thought") is True or p.get("thought") == True
                         )
-                        has_signature = (
-                            "thoughtSignature" in p or "thought_signature" in p
-                        )
-
-                        if is_thought or has_signature:
+                        if is_thought:
+                            has_signature = (
+                                "thoughtSignature" in p or "thought_signature" in p
+                            )
                             if has_signature:
-                                # Preserve the thought signature and marker while stripping the bulky thought text
+                                # Preserve the thought signature and marker while
+                                # stripping the bulky thought text
                                 sig_part = {
                                     k: v for k, v in p.items() if k not in ("text",)
                                 }
                                 sig_part["thought"] = True
                                 sig_part["text"] = ""
                                 new_parts.append(sig_part)
-                            # If it's a thought part without a signature, omit it to save tokens
+                            # Thought part without a signature: omit it to save tokens
                         else:
+                            # Not a thought part (text answer, functionCall,
+                            # inlineData, ...) — keep it exactly as-is, even if it
+                            # carries a thoughtSignature.
                             new_parts.append(p)
+                    else:
+                        new_parts.append(p)
 
                 if new_parts:
                     msg["parts"] = new_parts
-                else:
-                    msg["parts"] = [{"text": ""}]
+                    new_contents.append(msg)
+                # else: model turn consisted only of signature-less thoughts —
+                # drop the empty turn entirely (Gemini merges consecutive roles).
+            else:
+                new_contents.append(msg)
+        data["contents"] = new_contents
 
     if "messages" in data and isinstance(data["messages"], list):
         for msg in data["messages"]:
