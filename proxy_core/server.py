@@ -1911,56 +1911,6 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                     )
                                     yield f"{terminal_chunk}\n\n".encode("utf-8")
 
-                                # --- Stream integrity validation & anomaly detection ---
-                                resp_text_clean = "".join(response_text_buffer).strip()
-                                raw_resp = b"".join(raw_chunks_buffer)
-                                usage = extract_token_usage(raw_resp)
-                                comp_tokens = usage.get("completion_tokens", 0)
-                                chunks_count = len(raw_chunks_buffer)
-
-                                if not has_tool_calls and not resp_text_clean:
-                                    if (
-                                        "MALFORMED_FUNCTION_CALL" in finish_reasons
-                                        or "MALFORMED" in str(finish_reasons).upper()
-                                    ):
-                                        err_msg = "Model stream ended with malformed function call (MALFORMED_FUNCTION_CALL)."
-                                        logger.error(
-                                            f"[{candidate_model}] [vpn#{actual_vpn_index}] InvalidStreamError: {err_msg}"
-                                        )
-                                        add_anomaly_to_state(
-                                            candidate_model,
-                                            f"InvalidStreamError: {err_msg}",
-                                        )
-                                        raise InvalidStreamError(
-                                            err_msg, "MALFORMED_FUNCTION_CALL"
-                                        )
-
-                                    if has_thoughts:
-                                        err_msg = f"Model stream ended with empty response text but contained reasoning thoughts (chunks: {chunks_count}, completion_tokens: {comp_tokens})."
-                                        logger.error(
-                                            f"[{candidate_model}] [vpn#{actual_vpn_index}] InvalidStreamError: THINKING_ONLY_RESPONSE ({err_msg})"
-                                        )
-                                        add_anomaly_to_state(
-                                            candidate_model,
-                                            f"InvalidStreamError: {err_msg}",
-                                        )
-                                        raise InvalidStreamError(
-                                            err_msg, "THINKING_ONLY_RESPONSE"
-                                        )
-
-                                    if comp_tokens == 0 or chunks_count <= 3:
-                                        err_msg = f"Model stream ended with 0 completion tokens and no content (chunks: {chunks_count}, completion_tokens: {comp_tokens})."
-                                        logger.error(
-                                            f"[{candidate_model}] [vpn#{actual_vpn_index}] InvalidStreamError: ZERO_COMPLETION_TOKENS ({err_msg})"
-                                        )
-                                        add_anomaly_to_state(
-                                            candidate_model,
-                                            f"InvalidStreamError: {err_msg}",
-                                        )
-                                        raise InvalidStreamError(
-                                            err_msg, "ZERO_COMPLETION_TOKENS"
-                                        )
-
                             async for trans_chunk in iter_translated_chunks():
                                 yield trans_chunk
                         except asyncio.CancelledError:
@@ -1972,7 +1922,6 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                             logger.error(
                                 f"[{candidate_model}] [vpn#{actual_vpn_index}] Stream generator encountered an error: {e}"
                             )
-                            raise
                         finally:
                             if reader_task and not reader_task.done():
                                 reader_task.cancel()
