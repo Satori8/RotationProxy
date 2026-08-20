@@ -582,3 +582,104 @@ def test_build_continuation_payload_openai():
         "reasoning_content": "OpenAI reasoning",
     }
     assert messages[2] == {"role": "user", "content": "Continue"}
+
+
+def test_multihop_continuation_gemini_turn_structure():
+    from proxy_core.helpers import build_continuation_payload
+
+    base_payload = {
+        "contents": [{"role": "user", "parts": [{"text": "Write a long story."}]}]
+    }
+
+    # Hop 1: Accumulate part 1
+    hop1_text = "Chapter 1: The Beginning."
+    hop1_cont = build_continuation_payload(
+        orig_payload=base_payload,
+        accumulated_text=hop1_text,
+        is_gemini=True,
+    )
+    assert len(hop1_cont["contents"]) == 3
+    assert hop1_cont["contents"][0]["parts"][0]["text"] == "Write a long story."
+    assert hop1_cont["contents"][1]["parts"][0]["text"] == "Chapter 1: The Beginning."
+    assert hop1_cont["contents"][2]["parts"][0]["text"] == "Continue"
+
+    # Hop 2: In multi-hop, build_continuation_payload must be called with base_payload
+    # and all accumulated text so far, ensuring no compounding/duplicate model turns.
+    hop2_accumulated_text = "Chapter 1: The Beginning. Chapter 2: The Journey."
+    hop2_cont = build_continuation_payload(
+        orig_payload=base_payload,
+        accumulated_text=hop2_accumulated_text,
+        is_gemini=True,
+    )
+    assert len(hop2_cont["contents"]) == 3
+    assert hop2_cont["contents"][0]["parts"][0]["text"] == "Write a long story."
+    assert hop2_cont["contents"][1]["role"] == "model"
+    assert (
+        hop2_cont["contents"][1]["parts"][0]["text"]
+        == "Chapter 1: The Beginning. Chapter 2: The Journey."
+    )
+    assert hop2_cont["contents"][2]["role"] == "user"
+    assert hop2_cont["contents"][2]["parts"][0]["text"] == "Continue"
+
+
+def test_multihop_continuation_openai_turn_structure():
+    from proxy_core.helpers import build_continuation_payload
+
+    base_payload = {
+        "messages": [{"role": "user", "content": "Write a long code snippet."}]
+    }
+
+    # Hop 1
+    hop1_text = "def part_one():\n    pass\n"
+    hop1_cont = build_continuation_payload(
+        orig_payload=base_payload,
+        accumulated_text=hop1_text,
+        is_gemini=False,
+    )
+    assert len(hop1_cont["messages"]) == 3
+    assert hop1_cont["messages"][0]["content"] == "Write a long code snippet."
+    assert hop1_cont["messages"][1]["content"] == "def part_one():\n    pass\n"
+    assert hop1_cont["messages"][2]["content"] == "Continue"
+
+    # Hop 2
+    hop2_accumulated_text = "def part_one():\n    pass\n\ndef part_two():\n    pass\n"
+    hop2_cont = build_continuation_payload(
+        orig_payload=base_payload,
+        accumulated_text=hop2_accumulated_text,
+        is_gemini=False,
+    )
+    assert len(hop2_cont["messages"]) == 3
+    assert hop2_cont["messages"][0]["content"] == "Write a long code snippet."
+    assert hop2_cont["messages"][1]["role"] == "assistant"
+    assert (
+        hop2_cont["messages"][1]["content"]
+        == "def part_one():\n    pass\n\ndef part_two():\n    pass\n"
+    )
+    assert hop2_cont["messages"][2]["role"] == "user"
+    assert hop2_cont["messages"][2]["content"] == "Continue"
+
+
+def test_build_continuation_payload_is_gemini_flag():
+    from proxy_core.helpers import build_continuation_payload
+
+    generic_payload = {"prompt": "test"}
+
+    gemini_res = build_continuation_payload(
+        orig_payload=generic_payload,
+        accumulated_text="Response text",
+        is_gemini=True,
+    )
+    assert "contents" in gemini_res
+    assert "messages" not in gemini_res
+    assert gemini_res["contents"][0]["role"] == "model"
+    assert gemini_res["contents"][1]["role"] == "user"
+
+    openai_res = build_continuation_payload(
+        orig_payload=generic_payload,
+        accumulated_text="Response text",
+        is_gemini=False,
+    )
+    assert "messages" in openai_res
+    assert "contents" not in openai_res
+    assert openai_res["messages"][0]["role"] == "assistant"
+    assert openai_res["messages"][1]["role"] == "user"

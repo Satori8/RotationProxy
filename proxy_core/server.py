@@ -1709,6 +1709,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         finish_reasons = set()
                         thought_signatures = []
                         thought_text_buffer = []
+                        reader_task = None
 
                         try:
                             while True:
@@ -1908,6 +1909,16 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                     "completion_tokens", 0
                                 )
 
+                                normal_or_safety_finish = any(
+                                    r in finish_reasons
+                                    for r in (
+                                        "STOP",
+                                        "SAFETY",
+                                        "RECITATION",
+                                        "BLOCKLIST",
+                                        "PROHIBITED_CONTENT",
+                                    )
+                                )
                                 has_anomaly = (
                                     (
                                         "MAX_TOKENS" in finish_reasons
@@ -1918,6 +1929,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                         not resp_text_clean
                                         and not has_thoughts
                                         and comp_tokens_so_far == 0
+                                        and not normal_or_safety_finish
                                     )
                                 )
 
@@ -1955,7 +1967,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
 
                                     try:
                                         orig_payload_dict = json.loads(
-                                            current_body.decode("utf-8")
+                                            body.decode("utf-8")
                                         )
                                     except Exception:
                                         orig_payload_dict = {}
@@ -1968,7 +1980,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                         accumulated_text=resp_text_clean,
                                         accumulated_thoughts=thought_text_clean,
                                         thought_signatures=thought_signatures,
-                                        is_gemini=is_gemini_client,
+                                        is_gemini=(provider_name == "gemini"),
                                     )
                                     cont_body = json.dumps(cont_payload).encode("utf-8")
                                     current_body = cont_body
@@ -1988,7 +2000,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                             url=target_url,
                                             headers=headers,
                                             content=cont_body,
-                                            params=dict(request.query_params),
+                                            params=current_query_params,
                                         )
                                         current_response = await client.send(
                                             cont_req, stream=True
@@ -2080,7 +2092,8 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                 0,
                                 ACTIVE_STREAMS_PER_VPN.get(actual_vpn_index, 0) - 1,
                             )
-                            await response.aclose()
+                            if current_response is not None:
+                                await current_response.aclose()
                             response_text = "".join(response_text_buffer)
                             raw_req_bytes = body
                             raw_resp_bytes = b"".join(raw_chunks_buffer)
