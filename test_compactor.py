@@ -384,3 +384,47 @@ def test_strip_historical_thoughts_preserving_signatures():
 
     # Verify OpenAI messages reasoning stripped
     assert "reasoning_content" not in result["messages"][0]
+
+
+def test_split_merged_functioncall_text_parts():
+    from proxy_core.compactor import split_merged_parts_in_contents
+
+    payload = {
+        "contents": [
+            {"role": "user", "parts": [{"text": "hi"}]},
+            {
+                "role": "model",
+                "parts": [
+                    {
+                        "functionCall": {"name": "lookup", "args": {"q": "x"}},
+                        "text": "undefined\n",
+                    },
+                    {
+                        "functionCall": {"name": "read", "args": {"path": "a.py"}},
+                        "text": "Let me check",
+                        "thoughtSignature": "sig_abc",
+                    },
+                    {"text": "normal answer"},
+                    {"inlineData": {"mimeType": "image/png", "data": "base64"}},
+                ],
+            },
+        ]
+    }
+
+    result = split_merged_parts_in_contents(payload)
+    model_parts = result["contents"][1]["parts"]
+
+    # Merged functionCall+text part must be split into two separate parts
+    assert model_parts[0] == {"functionCall": {"name": "lookup", "args": {"q": "x"}}}
+    assert model_parts[1] == {"text": "undefined\n"}
+
+    # Signature stays on the functionCall part; text becomes its own part
+    assert model_parts[2] == {
+        "functionCall": {"name": "read", "args": {"path": "a.py"}},
+        "thoughtSignature": "sig_abc",
+    }
+    assert model_parts[3] == {"text": "Let me check"}
+
+    # Unmerged parts pass through untouched
+    assert model_parts[4] == {"text": "normal answer"}
+    assert model_parts[5] == {"inlineData": {"mimeType": "image/png", "data": "base64"}}

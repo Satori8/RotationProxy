@@ -867,6 +867,60 @@ def inject_tool_guardrails(data):
     return data
 
 
+GEMINI_PART_DATA_FIELDS = (
+    "inlineData",
+    "functionCall",
+    "functionResponse",
+    "fileData",
+    "executableCode",
+    "codeExecutionResult",
+)
+
+
+def split_merged_parts_in_contents(data):
+    """
+    Splits Gemini Part objects that illegally combine a data oneof field
+    (functionCall / inlineData / functionResponse / fileData / ...) with `text`
+    into separate parts.
+
+    Some SDK versions (e.g. @ai-sdk/google / google-genai / nodejs-vertexai)
+    merge streamed text + functionCall into a SINGLE Part when the model emits
+    text and a tool call in the same stream. Google rejects such parts with:
+        "Invalid value at 'contents[N].parts[0]' (oneof),
+         oneof field 'data' is already set. Cannot set 'text'"
+    The correct format is separate parts:
+        [{"functionCall": {...}}, {"text": "..."}]
+    """
+    if "contents" in data and isinstance(data["contents"], list):
+        for msg in data["contents"]:
+            if (
+                not isinstance(msg, dict)
+                or "parts" not in msg
+                or not isinstance(msg["parts"], list)
+            ):
+                continue
+            new_parts = []
+            for part in msg["parts"]:
+                if not isinstance(part, dict):
+                    new_parts.append(part)
+                    continue
+                data_field = next(
+                    (k for k in GEMINI_PART_DATA_FIELDS if k in part), None
+                )
+                if data_field and "text" in part:
+                    # Split into separate parts; keep thought/signature metadata
+                    # on the data part (functionCall parts carry thoughtSignature).
+                    data_part = {k: v for k, v in part.items() if k != "text"}
+                    new_parts.append(data_part)
+                    text_val = part.get("text")
+                    if isinstance(text_val, str) and text_val.strip():
+                        new_parts.append({"text": text_val})
+                else:
+                    new_parts.append(part)
+            msg["parts"] = new_parts
+    return data
+
+
 def strip_historical_thoughts_from_contents(data):
     """
     Strips bulky reasoning thought text from historical model turns in outgoing requests
@@ -1441,6 +1495,11 @@ def process_request_payload(payload_dict, config=None):
     state.COMPACTOR_COMP_TOKENS = (
         getattr(state, "COMPACTOR_COMP_TOKENS", 0) + final_tokens
     )
+
+    # Split merged functionCall+text parts (SDK serialization bug workaround).
+    # Runs unconditionally: it only repairs invalid payloads and is independent
+    # of the compactor_strip_thoughts checkbox.
+    payload_dict = split_merged_parts_in_contents(payload_dict)
 
     if config.get("compactor_strip_thoughts", False):
         payload_dict = strip_historical_thoughts_from_contents(payload_dict)
