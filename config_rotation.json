@@ -177,8 +177,8 @@
   },
   "use_kaggle": false,
   "force_model": {
-    "all": "google/gemini-3.7-flash",
-    "gemini-3.6-flash": "google/gemini-3.7-flash"
+    "all": "auto",
+    "gemini-3.6-flash": "auto"
   },
   "save_chat_logs": false,
   "vpn_switching_mode": "every_request",
@@ -205,5 +205,6 @@
   "compactor_strip_thoughts": false,
   "system_vpn_active": false,
   "system_vpn_index": 6,
-  "sse_keepalive": true
+  "sse_keepalive": true,
+  "auto_continue": true
 }

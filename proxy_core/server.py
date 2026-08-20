@@ -64,6 +64,8 @@ from proxy_core.helpers import (
     translate_openai_chunk_to_gemini,
     flush_tool_calls_to_gemini,
     add_anomaly_to_state,
+    extract_thought_signatures_from_chunk,
+    build_continuation_payload,
 )
 
 import sys
@@ -1691,84 +1693,95 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         ACTIVE_STREAMS_PER_VPN[actual_vpn_index] = (
                             ACTIVE_STREAMS_PER_VPN.get(actual_vpn_index, 0) + 1
                         )
-                        chunk_queue = asyncio.Queue(maxsize=100)
-                        reader_task = None
+                        current_response = response
+                        current_body = body
+                        auto_continue_count = 0
+                        max_auto_continues = 2
 
-                        async def upstream_reader():
-                            try:
-                                async for chunk in response.aiter_bytes():
-                                    await chunk_queue.put(("chunk", chunk))
-                                await chunk_queue.put(("eof", None))
-                            except (httpx.ReadError, httpx.HTTPError) as he:
-                                logger.error(
-                                    f"[{candidate_model}] [vpn#{actual_vpn_index}] Upstream stream read error (abrupt disconnect or timeout): {he}"
-                                )
-                                await chunk_queue.put(("error", he))
-                            except asyncio.CancelledError:
-                                logger.warning(
-                                    f"[{candidate_model}] [vpn#{actual_vpn_index}] Upstream reader cancelled."
-                                )
-                                await chunk_queue.put(("eof", None))
-                            except Exception as se:
-                                logger.error(
-                                    f"[{candidate_model}] [vpn#{actual_vpn_index}] Unexpected stream exception: {se}"
-                                )
-                                await chunk_queue.put(("error", se))
+                        translation_buffer = ""
+                        tool_call_acc = {"calls": {}}
+                        terminal_emitted = False
+                        has_thoughts = False
+                        has_tool_calls = False
+                        finish_reasons = set()
+                        thought_signatures = []
+                        thought_text_buffer = []
 
                         try:
-                            reader_task = asyncio.create_task(upstream_reader())
+                            while True:
+                                chunk_queue = asyncio.Queue(maxsize=100)
+                                resp_to_read = current_response
 
-                            async def iter_bytes():
-                                try:
-                                    while True:
-                                        cfg = load_rotation_config()
-                                        timeout_val = (
-                                            30.0
-                                            if cfg.get("sse_keepalive", True)
-                                            else None
+                                async def upstream_reader(target_resp, queue):
+                                    try:
+                                        async for chunk in target_resp.aiter_bytes():
+                                            await queue.put(("chunk", chunk))
+                                        await queue.put(("eof", None))
+                                    except (httpx.ReadError, httpx.HTTPError) as he:
+                                        logger.error(
+                                            f"[{candidate_model}] [vpn#{actual_vpn_index}] Upstream stream read error (abrupt disconnect or timeout): {he}"
                                         )
-                                        try:
-                                            if timeout_val:
-                                                msg_type, data = await asyncio.wait_for(
-                                                    chunk_queue.get(),
-                                                    timeout=timeout_val,
-                                                )
-                                            else:
-                                                msg_type, data = await chunk_queue.get()
-                                        except asyncio.TimeoutError:
-                                            # Send valid empty SSE heartbeat chunk so client parser never fails
-                                            # Reader task is NOT cancelled because it runs independently!
-                                            if is_gemini_client:
-                                                yield b"data: {}\n\n"
-                                            else:
-                                                yield b": ping\n\n"
-                                            continue
+                                        await queue.put(("error", he))
+                                    except asyncio.CancelledError:
+                                        logger.warning(
+                                            f"[{candidate_model}] [vpn#{actual_vpn_index}] Upstream reader cancelled."
+                                        )
+                                        await queue.put(("eof", None))
+                                    except Exception as se:
+                                        logger.error(
+                                            f"[{candidate_model}] [vpn#{actual_vpn_index}] Unexpected stream exception: {se}"
+                                        )
+                                        await queue.put(("error", se))
 
-                                        if msg_type == "chunk":
-                                            raw_chunks_buffer.append(data)
-                                            yield data
-                                        elif msg_type == "eof":
-                                            break
-                                        elif msg_type == "error":
-                                            raise data
-                                except asyncio.CancelledError:
-                                    logger.warning(
-                                        f"[{candidate_model}] [vpn#{actual_vpn_index}] Stream transmission cancelled by client (OpenCode disconnected)."
-                                    )
-                                    raise
-                                except Exception as se:
-                                    logger.error(
-                                        f"[{candidate_model}] [vpn#{actual_vpn_index}] Unexpected stream exception: {se}"
-                                    )
-                                    raise
+                                reader_task = asyncio.create_task(
+                                    upstream_reader(resp_to_read, chunk_queue)
+                                )
 
-                            async def iter_translated_chunks():
-                                translation_buffer = ""
-                                tool_call_acc = {"calls": {}}
-                                terminal_emitted = False
-                                has_thoughts = False
-                                has_tool_calls = False
-                                finish_reasons = set()
+                                async def iter_bytes():
+                                    try:
+                                        while True:
+                                            cfg = load_rotation_config()
+                                            timeout_val = (
+                                                30.0
+                                                if cfg.get("sse_keepalive", True)
+                                                else None
+                                            )
+                                            try:
+                                                if timeout_val:
+                                                    msg_type, data = (
+                                                        await asyncio.wait_for(
+                                                            chunk_queue.get(),
+                                                            timeout=timeout_val,
+                                                        )
+                                                    )
+                                                else:
+                                                    msg_type, data = (
+                                                        await chunk_queue.get()
+                                                    )
+                                            except asyncio.TimeoutError:
+                                                if is_gemini_client:
+                                                    yield b"data: {}\n\n"
+                                                else:
+                                                    yield b": ping\n\n"
+                                                continue
+
+                                            if msg_type == "chunk":
+                                                raw_chunks_buffer.append(data)
+                                                yield data
+                                            elif msg_type == "eof":
+                                                break
+                                            elif msg_type == "error":
+                                                raise data
+                                    except asyncio.CancelledError:
+                                        logger.warning(
+                                            f"[{candidate_model}] [vpn#{actual_vpn_index}] Stream transmission cancelled by client (OpenCode disconnected)."
+                                        )
+                                        raise
+                                    except Exception as se:
+                                        logger.error(
+                                            f"[{candidate_model}] [vpn#{actual_vpn_index}] Unexpected stream exception: {se}"
+                                        )
+                                        raise
 
                                 async for chunk in iter_bytes():
                                     if chunk in (b": ping\n\n", b"data: {}\n\n"):
@@ -1813,6 +1826,27 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                                 )
 
                                         try:
+                                            sigs = extract_thought_signatures_from_chunk(
+                                                chunk_str, provider_name
+                                            )
+                                            for sig in sigs:
+                                                if sig not in thought_signatures:
+                                                    thought_signatures.append(sig)
+                                        except Exception:
+                                            pass
+
+                                        try:
+                                            thought_part = extract_thought_from_chunk(
+                                                chunk_str, provider_name
+                                            )
+                                            if thought_part:
+                                                thought_text_buffer.append(
+                                                    thought_part
+                                                )
+                                        except Exception:
+                                            pass
+
+                                        try:
                                             text_part = extract_text_from_chunk(
                                                 chunk_str, provider_name
                                             )
@@ -1826,9 +1860,6 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                     if needs_gemini_response_translation and chunk_str:
                                         try:
                                             translation_buffer += chunk_str
-                                            # Split complete SSE lines out of the buffer; a line
-                                            # fragmented across TCP chunks is held until its "\n"
-                                            # arrives so it is translated as one unit.
                                             while "\n" in translation_buffer:
                                                 line, translation_buffer = (
                                                     translation_buffer.split("\n", 1)
@@ -1854,65 +1885,177 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                     else:
                                         yield chunk
 
-                                # Flush any line still buffered when the stream ends
-                                if (
-                                    needs_gemini_response_translation
-                                    and translation_buffer
-                                ):
-                                    line_stripped = translation_buffer.strip()
-                                    if line_stripped:
-                                        try:
-                                            translated_line, is_terminal = (
-                                                translate_openai_chunk_to_gemini(
-                                                    line_stripped, tool_call_acc
-                                                )
-                                            )
-                                            if translated_line:
-                                                yield f"{translated_line}\n\n".encode(
-                                                    "utf-8"
-                                                )
-                                                if is_terminal:
-                                                    terminal_emitted = True
-                                        except Exception as te:
-                                            logger.debug(
-                                                f"Failed to translate trailing chunk: {te}"
-                                            )
-                                            yield translation_buffer.encode("utf-8")
+                                # Clean up current reader task and response
+                                if reader_task and not reader_task.done():
+                                    reader_task.cancel()
+                                await resp_to_read.aclose()
 
-                                # If any tool calls remain un-emitted at stream end, emit them!
-                                if (
-                                    needs_gemini_response_translation
-                                    and tool_call_acc
-                                    and tool_call_acc.get("calls")
-                                ):
-                                    try:
-                                        flushed, is_terminal = (
-                                            flush_tool_calls_to_gemini(tool_call_acc)
+                                # Check Auto-Continue condition
+                                cfg = load_rotation_config()
+                                auto_continue_enabled = cfg.get("auto_continue", True)
+                                resp_text_clean = "".join(response_text_buffer).strip()
+                                thought_text_clean = "".join(
+                                    thought_text_buffer
+                                ).strip()
+                                raw_resp_so_far = b"".join(raw_chunks_buffer)
+                                usage_so_far = extract_token_usage(raw_resp_so_far)
+                                comp_tokens_so_far = usage_so_far.get(
+                                    "completion_tokens", 0
+                                )
+
+                                has_anomaly = (
+                                    (
+                                        "MAX_TOKENS" in finish_reasons
+                                        or "LENGTH" in finish_reasons
+                                    )
+                                    or (has_thoughts and not resp_text_clean)
+                                    or (
+                                        not resp_text_clean
+                                        and not has_thoughts
+                                        and comp_tokens_so_far == 0
+                                    )
+                                )
+
+                                should_continue = (
+                                    auto_continue_enabled
+                                    and not has_tool_calls
+                                    and has_anomaly
+                                    and (auto_continue_count < max_auto_continues)
+                                )
+
+                                if should_continue:
+                                    auto_continue_count += 1
+                                    trigger_reason = (
+                                        "MAX_TOKENS_TRUNCATED"
+                                        if (
+                                            "MAX_TOKENS" in finish_reasons
+                                            or "LENGTH" in finish_reasons
                                         )
-                                        if flushed:
-                                            yield f"{flushed}\n\n".encode("utf-8")
+                                        else (
+                                            "THINKING_ONLY"
+                                            if has_thoughts
+                                            else "EMPTY_RESPONSE"
+                                        )
+                                    )
+                                    logger.info(
+                                        f"[{candidate_model}] [vpn#{actual_vpn_index}] [Auto-Continue #{auto_continue_count}] "
+                                        f"Triggered (reason: {trigger_reason}, thoughts: {len(thought_text_clean)} chars, text: {len(resp_text_clean)} chars). Requesting continuation..."
+                                    )
+
+                                    try:
+                                        orig_payload_dict = json.loads(
+                                            current_body.decode("utf-8")
+                                        )
+                                    except Exception:
+                                        orig_payload_dict = {}
+
+                                    if not orig_payload_dict:
+                                        break
+
+                                    cont_payload = build_continuation_payload(
+                                        orig_payload=orig_payload_dict,
+                                        accumulated_text=resp_text_clean,
+                                        accumulated_thoughts=thought_text_clean,
+                                        thought_signatures=thought_signatures,
+                                        is_gemini=is_gemini_client,
+                                    )
+                                    cont_body = json.dumps(cont_payload).encode("utf-8")
+                                    current_body = cont_body
+
+                                    # Clear finish_reasons for next stream segment
+                                    finish_reasons.clear()
+
+                                    # Send heartbeat while establishing continuation
+                                    if is_gemini_client:
+                                        yield b"data: {}\n\n"
+                                    else:
+                                        yield b": ping\n\n"
+
+                                    try:
+                                        cont_req = client.build_request(
+                                            method=request.method,
+                                            url=target_url,
+                                            headers=headers,
+                                            content=cont_body,
+                                            params=dict(request.query_params),
+                                        )
+                                        current_response = await client.send(
+                                            cont_req, stream=True
+                                        )
+                                        if current_response.status_code >= 400:
+                                            logger.warning(
+                                                f"[{candidate_model}] [vpn#{actual_vpn_index}] Auto-Continue request returned HTTP {current_response.status_code}. Stopping continuation."
+                                            )
+                                            await current_response.aclose()
+                                            break
+                                        # Loop continues with new stream segment!
+                                        continue
+                                    except Exception as ce:
+                                        logger.error(
+                                            f"[{candidate_model}] [vpn#{actual_vpn_index}] Failed to send Auto-Continue request: {ce}"
+                                        )
+                                        break
+                                else:
+                                    # No continuation needed: flush buffers and finish
+                                    break
+
+                            # Flush any line still buffered when the stream ends
+                            if (
+                                needs_gemini_response_translation
+                                and translation_buffer
+                            ):
+                                line_stripped = translation_buffer.strip()
+                                if line_stripped:
+                                    try:
+                                        translated_line, is_terminal = (
+                                            translate_openai_chunk_to_gemini(
+                                                line_stripped, tool_call_acc
+                                            )
+                                        )
+                                        if translated_line:
+                                            yield f"{translated_line}\n\n".encode(
+                                                "utf-8"
+                                            )
                                             if is_terminal:
                                                 terminal_emitted = True
-                                    except Exception as fe:
+                                    except Exception as te:
                                         logger.debug(
-                                            f"Failed to flush tool calls at stream end: {fe}"
+                                            f"Failed to translate trailing chunk: {te}"
                                         )
+                                        yield translation_buffer.encode("utf-8")
 
-                                # If the upstream never sent a finish chunk (e.g. only [DONE]
-                                # or abrupt close), emit a terminal STOP chunk so the client
-                                # finalizes the turn instead of treating the stream as cut off.
-                                if (
-                                    needs_gemini_response_translation
-                                    and not terminal_emitted
-                                ):
-                                    terminal_chunk = (
-                                        'data: {"candidates":[{"content":{"parts":[{"text":""}],'
-                                        '"role":"model"},"index":0,"finishReason":"STOP"}]}'
+                            # If any tool calls remain un-emitted at stream end, emit them!
+                            if (
+                                needs_gemini_response_translation
+                                and tool_call_acc
+                                and tool_call_acc.get("calls")
+                            ):
+                                try:
+                                    flushed, is_terminal = flush_tool_calls_to_gemini(
+                                        tool_call_acc
                                     )
-                                    yield f"{terminal_chunk}\n\n".encode("utf-8")
+                                    if flushed:
+                                        yield f"{flushed}\n\n".encode("utf-8")
+                                        if is_terminal:
+                                            terminal_emitted = True
+                                except Exception as fe:
+                                    logger.debug(
+                                        f"Failed to flush tool calls at stream end: {fe}"
+                                    )
 
-                            async for trans_chunk in iter_translated_chunks():
-                                yield trans_chunk
+                            # If the upstream never sent a finish chunk (e.g. only [DONE]
+                            # or abrupt close), emit a terminal STOP chunk so the client
+                            # finalizes the turn instead of treating the stream as cut off.
+                            if (
+                                needs_gemini_response_translation
+                                and not terminal_emitted
+                            ):
+                                terminal_chunk = (
+                                    'data: {"candidates":[{"content":{"parts":[{"text":""}],'
+                                    '"role":"model"},"index":0,"finishReason":"STOP"}]}'
+                                )
+                                yield f"{terminal_chunk}\n\n".encode("utf-8")
+
                         except asyncio.CancelledError:
                             logger.warning(
                                 f"[{candidate_model}] [vpn#{actual_vpn_index}] Stream generator task cancelled."

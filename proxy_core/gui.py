@@ -289,6 +289,16 @@ class ProxyGUI(ctk.CTk):
         )
         self.sse_keepalive_checkbox.pack(anchor="w", padx=10, pady=(3, 3))
 
+        self.auto_continue_var = ctk.BooleanVar(value=config.get("auto_continue", True))
+        self.auto_continue_checkbox = ctk.CTkCheckBox(
+            self.left_panel,
+            text="Auto-Continue",
+            variable=self.auto_continue_var,
+            command=self.on_auto_continue_toggle,
+            font=ctk.CTkFont(size=10, weight="bold"),
+        )
+        self.auto_continue_checkbox.pack(anchor="w", padx=10, pady=(3, 3))
+
         self.model_rotation_var = ctk.BooleanVar(
             value=config.get("enable_model_rotation", False)
         )
@@ -799,6 +809,12 @@ class ProxyGUI(ctk.CTk):
         config["sse_keepalive"] = val
         save_rotation_config(config)
         logger.info(f"SSE Keep-Alive set to: {val}")
+
+    def on_auto_continue_toggle(self):
+        cfg = load_rotation_config()
+        cfg["auto_continue"] = self.auto_continue_var.get()
+        save_rotation_config(cfg)
+        logger.info(f"[GUI] Auto-Continue set to {cfg['auto_continue']}")
 
     def on_model_rotation_toggle(self):
         config = load_rotation_config()

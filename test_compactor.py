@@ -449,4 +449,135 @@ def test_split_merged_functioncall_text_parts():
 
     # Unmerged parts pass through untouched
     assert model_parts[4] == {"text": "normal answer"}
-    assert model_parts[5] == {"inlineData": {"mimeType": "image/png", "data": "base64"}}
+    assert model_parts[5] == {
+        "inlineData": {"mimeType": "image/png", "data": "base64"}
+    }
+
+
+def test_auto_continue_config_default():
+    from proxy_core.config import load_rotation_config
+
+    cfg = load_rotation_config()
+    assert "auto_continue" in cfg
+    assert isinstance(cfg["auto_continue"], bool)
+
+
+def test_extract_thought_signatures_from_chunk():
+    from proxy_core.helpers import extract_thought_signatures_from_chunk
+
+    gemini_chunk = json.dumps(
+        {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "thought": True,
+                                "thoughtSignature": "gemini_sig_123",
+                                "text": "thinking...",
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    )
+    sigs = extract_thought_signatures_from_chunk(
+        f"data: {gemini_chunk}", provider="gemini"
+    )
+    assert sigs == ["gemini_sig_123"]
+
+    openai_chunk = json.dumps(
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "thoughtSignature": "openai_sig_456",
+                        "reasoning_content": "reasoning...",
+                    }
+                }
+            ]
+        }
+    )
+    sigs_oa = extract_thought_signatures_from_chunk(
+        f"data: {openai_chunk}", provider="openai"
+    )
+    assert sigs_oa == ["openai_sig_456"]
+
+
+def test_build_continuation_payload_gemini():
+    from proxy_core.helpers import build_continuation_payload
+
+    orig = {
+        "contents": [
+            {"role": "user", "parts": [{"text": "Hello"}]},
+        ]
+    }
+    cont = build_continuation_payload(
+        orig_payload=orig,
+        accumulated_text="Partial answer text",
+        accumulated_thoughts="Some thoughts",
+        thought_signatures=None,
+        is_gemini=True,
+    )
+    contents = cont["contents"]
+    assert len(contents) == 3
+    assert contents[0] == {"role": "user", "parts": [{"text": "Hello"}]}
+    assert contents[1]["role"] == "model"
+    # Thought part + text part in model turn
+    assert any(p.get("thought") is True for p in contents[1]["parts"])
+    assert any(p.get("text") == "Partial answer text" for p in contents[1]["parts"])
+    # User turn with Continue
+    assert contents[2] == {"role": "user", "parts": [{"text": "Continue"}]}
+
+
+def test_build_continuation_payload_gemini_with_signature():
+    from proxy_core.helpers import build_continuation_payload
+
+    orig = {
+        "contents": [
+            {"role": "user", "parts": [{"text": "Hello"}]},
+        ]
+    }
+    cont = build_continuation_payload(
+        orig_payload=orig,
+        accumulated_text="Answer part 1",
+        accumulated_thoughts="",
+        thought_signatures=["sig_xyz"],
+        is_gemini=True,
+    )
+    contents = cont["contents"]
+    assert len(contents) == 3
+    model_parts = contents[1]["parts"]
+    sig_part = next((p for p in model_parts if "thoughtSignature" in p), None)
+    assert sig_part is not None
+    assert sig_part["thoughtSignature"] == "sig_xyz"
+    assert sig_part["text"] == ""
+    assert sig_part["thought"] is True
+    assert contents[2] == {"role": "user", "parts": [{"text": "Continue"}]}
+
+
+def test_build_continuation_payload_openai():
+    from proxy_core.helpers import build_continuation_payload
+
+    orig = {
+        "messages": [
+            {"role": "user", "content": "Hello OpenAI"},
+        ]
+    }
+    cont = build_continuation_payload(
+        orig_payload=orig,
+        accumulated_text="OpenAI answer part 1",
+        accumulated_thoughts="OpenAI reasoning",
+        thought_signatures=None,
+        is_gemini=False,
+    )
+    messages = cont["messages"]
+    assert len(messages) == 3
+    assert messages[0] == {"role": "user", "content": "Hello OpenAI"}
+    assert messages[1] == {
+        "role": "assistant",
+        "content": "OpenAI answer part 1",
+        "reasoning_content": "OpenAI reasoning",
+    }
+    assert messages[2] == {"role": "user", "content": "Continue"}

@@ -80,6 +80,10 @@ def load_rotation_config() -> dict:
                 config["filter_context"] = True
                 needs_upgrade = True
 
+            if "auto_continue" not in config:
+                config["auto_continue"] = True
+                needs_upgrade = True
+
             # VPN Config Upgrade
             if "vpn_switching_mode" not in config:
                 config["vpn_switching_mode"] = "disabled"
@@ -126,6 +130,7 @@ def load_rotation_config() -> dict:
         "force_model": {},
         "save_chat_logs": False,
         "filter_context": True,
+        "auto_continue": True,
         "vpn_switching_mode": "disabled",
         "vpn_static_channel": 0,
         "vpn_errors_threshold": 5,

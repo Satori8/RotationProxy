@@ -200,6 +200,105 @@ def extract_thought_from_chunk(chunk_str: str, provider: str) -> str:
     return "".join(extracted_thoughts)
 
 
+def extract_thought_signatures_from_chunk(chunk_str: str, provider: str) -> list[str]:
+    """Extracts non-empty thoughtSignature / thought_signature strings from an SSE chunk."""
+    signatures = []
+    lines = chunk_str.split("\n")
+    for line in lines:
+        line = line.strip()
+        if not line or not line.startswith("data:"):
+            continue
+        line = line[5:].strip()
+        if line == "[DONE]":
+            continue
+        try:
+            data = json.loads(line)
+            if provider == "gemini" or "candidates" in data:
+                candidates = data.get("candidates", [])
+                for cand in candidates:
+                    content = cand.get("content", {})
+                    parts = content.get("parts", [])
+                    for p in parts:
+                        if isinstance(p, dict):
+                            sig = p.get("thoughtSignature") or p.get("thought_signature")
+                            if sig and isinstance(sig, str) and sig.strip():
+                                if sig.strip() not in signatures:
+                                    signatures.append(sig.strip())
+            else:
+                choices = data.get("choices", [])
+                for choice in choices:
+                    delta = choice.get("delta") or choice.get("message") or {}
+                    sig = delta.get("thoughtSignature") or delta.get("thought_signature")
+                    if sig and isinstance(sig, str) and sig.strip():
+                        if sig.strip() not in signatures:
+                            signatures.append(sig.strip())
+        except Exception:
+            pass
+    return signatures
+
+
+def build_continuation_payload(
+    orig_payload: dict,
+    accumulated_text: str = "",
+    accumulated_thoughts: str = "",
+    thought_signatures: list[str] | None = None,
+    is_gemini: bool = True,
+) -> dict:
+    """
+    Constructs a multi-turn continuation request payload from the accumulated
+    model output (preserving thought signatures, thoughts, and text generated so far)
+    and appends a user 'Continue' turn.
+    """
+    import copy
+
+    cont_payload = copy.deepcopy(orig_payload)
+    signatures = thought_signatures or []
+
+    if is_gemini or "contents" in cont_payload:
+        if "contents" not in cont_payload or not isinstance(
+            cont_payload["contents"], list
+        ):
+            cont_payload["contents"] = []
+
+        model_parts = []
+        if signatures:
+            for sig in signatures:
+                model_parts.append(
+                    {"thought": True, "thoughtSignature": sig, "text": ""}
+                )
+        elif accumulated_thoughts and accumulated_thoughts.strip():
+            model_parts.append({"thought": True, "text": accumulated_thoughts.strip()})
+
+        if accumulated_text and accumulated_text.strip():
+            model_parts.append({"text": accumulated_text.strip()})
+
+        if not model_parts:
+            model_parts.append({"text": ""})
+
+        cont_payload["contents"].append({"role": "model", "parts": model_parts})
+        cont_payload["contents"].append(
+            {"role": "user", "parts": [{"text": "Continue"}]}
+        )
+
+        from proxy_core.compactor import split_merged_parts_in_contents
+
+        cont_payload = split_merged_parts_in_contents(cont_payload)
+    else:
+        if "messages" not in cont_payload or not isinstance(
+            cont_payload["messages"], list
+        ):
+            cont_payload["messages"] = []
+
+        asst_msg = {"role": "assistant", "content": accumulated_text or ""}
+        if accumulated_thoughts and accumulated_thoughts.strip():
+            asst_msg["reasoning_content"] = accumulated_thoughts.strip()
+
+        cont_payload["messages"].append(asst_msg)
+        cont_payload["messages"].append({"role": "user", "content": "Continue"})
+
+    return cont_payload
+
+
 def extract_token_usage(raw_response: bytes) -> dict:
     usage_info = {
         "prompt_tokens": 0,
