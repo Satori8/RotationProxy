@@ -683,3 +683,109 @@ def test_build_continuation_payload_is_gemini_flag():
     assert "contents" not in openai_res
     assert openai_res["messages"][0]["role"] == "assistant"
     assert openai_res["messages"][1]["role"] == "user"
+
+
+def test_harden_gemini_history_coalesce_and_constraints():
+    from proxy_core.compactor import harden_gemini_history, SYNTHETIC_THOUGHT_SIGNATURE
+
+    # 1. Adjacent user + user and model + model coalescing
+    payload = {
+        "contents": [
+            {"role": "user", "parts": [{"text": "Hello "}]},
+            {"role": "user", "parts": [{"text": "world!"}]},
+            {"role": "model", "parts": [{"text": "Part A. "}]},
+            {"role": "model", "parts": [{"text": "Part B."}]},
+            {"role": "user", "parts": [{"text": "Next prompt"}]},
+        ]
+    }
+    hardened = harden_gemini_history(payload)
+    contents = hardened["contents"]
+    assert len(contents) == 3
+    assert contents[0]["role"] == "user"
+    assert len(contents[0]["parts"]) == 2
+    assert contents[1]["role"] == "model"
+    assert len(contents[1]["parts"]) == 2
+    assert contents[2]["role"] == "user"
+
+    # 2. Start with model -> prepends user sentinel
+    lead_model = {
+        "contents": [
+            {"role": "model", "parts": [{"text": "I was interrupted"}]},
+            {"role": "user", "parts": [{"text": "Please continue"}]},
+        ]
+    }
+    hardened_lead = harden_gemini_history(lead_model)
+    assert hardened_lead["contents"][0]["role"] == "user"
+    assert hardened_lead["contents"][1]["role"] == "model"
+    assert hardened_lead["contents"][2]["role"] == "user"
+
+    # 3. End with model -> appends user sentinel
+    trail_model = {
+        "contents": [
+            {"role": "user", "parts": [{"text": "Hello"}]},
+            {"role": "model", "parts": [{"text": "Partial answer"}]},
+        ]
+    }
+    hardened_trail = harden_gemini_history(trail_model)
+    assert hardened_trail["contents"][-1]["role"] == "user"
+    assert hardened_trail["contents"][-1]["parts"][0]["text"] == "Please continue."
+
+
+def test_harden_gemini_history_synthetic_signature_and_tool_repair():
+    from proxy_core.compactor import harden_gemini_history, SYNTHETIC_THOUGHT_SIGNATURE
+
+    # Model functionCall missing thoughtSignature gets SYNTHETIC_THOUGHT_SIGNATURE
+    payload = {
+        "contents": [
+            {"role": "user", "parts": [{"text": "Lookup file"}]},
+            {
+                "role": "model",
+                "parts": [
+                    {
+                        "functionCall": {
+                            "name": "read_file",
+                            "id": "call_1",
+                            "args": {"p": "a.txt"},
+                        }
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "name": "read_file",
+                            "id": "call_1",
+                            "response": {"content": "data"},
+                        }
+                    }
+                ],
+            },
+            {"role": "user", "parts": [{"text": "What next?"}]},
+        ]
+    }
+    hardened = harden_gemini_history(payload)
+    model_turn = hardened["contents"][1]
+    fc_part = model_turn["parts"][0]
+    assert fc_part.get("thoughtSignature") == SYNTHETIC_THOUGHT_SIGNATURE
+
+    # Unpaired functionCall gets synthesized error response
+    unpaired_call = {
+        "contents": [
+            {"role": "user", "parts": [{"text": "Call tool"}]},
+            {
+                "role": "model",
+                "parts": [{"functionCall": {"name": "calc", "id": "c99", "args": {}}}],
+            },
+            {"role": "user", "parts": [{"text": "Next"}]},
+        ]
+    }
+    hardened_call = harden_gemini_history(unpaired_call)
+    user_resp_turn = hardened_call["contents"][2]
+    fr_part = next(
+        (p for p in user_resp_turn["parts"] if "functionResponse" in p), None
+    )
+    assert fr_part is not None
+    assert fr_part["functionResponse"]["id"] == "c99"
+    assert "error" in fr_part["functionResponse"]["response"]

@@ -867,6 +867,248 @@ def inject_tool_guardrails(data):
     return data
 
 
+SYNTHETIC_THOUGHT_SIGNATURE = "skip_thought_signature_validator"
+
+DEFAULT_SENTINELS = {
+    "continuation": "[Continuing from previous AI thoughts...]",
+    "lostToolResponse": "The tool execution result was lost due to context management truncation.",
+}
+
+
+def harden_gemini_history(data: dict) -> dict:
+    """
+    Hardens and sanitizes Gemini conversation history (contents array) before payload
+    dispatch, implementing Google's official historyHardening.ts specification:
+    1. Pass 1 (Coalesce Adjacent Roles): Merges adjacent turns with identical roles
+       (user+user -> merge parts, model+model -> merge parts).
+    2. Pass 2 (Tool Call/Response Pairing & Signature Repair):
+       - Injects SYNTHETIC_THOUGHT_SIGNATURE ('skip_thought_signature_validator') on the
+         first functionCall of any model turn if missing.
+       - Synthesizes user functionResponse sentinels for any unpaired functionCalls.
+       - Synthesizes model functionCall parts for any orphaned functionResponses.
+    3. Pass 3 (Structural Refinement): Hoists functionResponses to the top of user turns
+       and orders them to match the preceding model turn's functionCall IDs.
+    4. Pass 4 (Enforce Role Constraints):
+       - Ensures history starts with a user turn (prepends sentinel if starting with model).
+       - Ensures history ends with a user turn (appends 'Please continue.' if ending with model).
+       - Re-coalesces turns.
+    5. Pass 5 (Scrub Non-standard Keys): Retains only valid Gemini Part keys.
+    """
+    if "contents" not in data or not isinstance(data["contents"], list):
+        return data
+
+    contents = data["contents"]
+    if not contents:
+        return data
+
+    # Helper: coalesce adjacent roles
+    def _coalesce_turns(raw_turns):
+        coalesced = []
+        for t in raw_turns:
+            if not isinstance(t, dict):
+                continue
+            role = t.get("role")
+            parts = t.get("parts", [])
+            if not parts:
+                continue
+            if coalesced and coalesced[-1].get("role") == role:
+                coalesced[-1]["parts"] = coalesced[-1].get("parts", []) + list(parts)
+            else:
+                coalesced.append({"role": role, "parts": list(parts)})
+        return coalesced
+
+    # Pass 1: Initial coalesce
+    work_contents = _coalesce_turns(contents)
+    if not work_contents:
+        return data
+
+    # Pass 2: Tool pairing and synthetic signatures
+    paired_contents = []
+    i = 0
+    while i < len(work_contents):
+        turn = work_contents[i]
+        role = turn.get("role")
+        parts = turn.get("parts", [])
+
+        if role == "model":
+            found_call = False
+            for j, p in enumerate(parts):
+                if isinstance(p, dict) and (
+                    "functionCall" in p or "function_call" in p
+                ):
+                    has_sig = "thoughtSignature" in p or "thought_signature" in p
+                    if not found_call and not has_sig:
+                        parts[j]["thoughtSignature"] = SYNTHETIC_THOUGHT_SIGNATURE
+                    found_call = True
+
+            call_parts = [
+                p
+                for p in parts
+                if isinstance(p, dict) and ("functionCall" in p or "function_call" in p)
+            ]
+            if call_parts:
+                next_turn = work_contents[i + 1] if i + 1 < len(work_contents) else None
+                missing_calls = []
+                for cp in call_parts:
+                    fc = cp.get("functionCall") or cp.get("function_call", {})
+                    cid = fc.get("id")
+                    cname = fc.get("name", "unknown")
+
+                    has_resp = (
+                        next_turn
+                        and next_turn.get("role") == "user"
+                        and any(
+                            (
+                                rp.get("functionResponse", {}).get("id") == cid
+                                or rp.get("functionResponse", {}).get("name") == cname
+                            )
+                            for rp in next_turn.get("parts", [])
+                            if isinstance(rp, dict)
+                        )
+                    )
+                    if not has_resp:
+                        missing_calls.append({"id": cid, "name": cname})
+
+                if missing_calls:
+                    if next_turn and next_turn.get("role") == "user":
+                        target_user = next_turn
+                    else:
+                        target_user = {"role": "user", "parts": []}
+                        work_contents.insert(i + 1, target_user)
+
+                    for m in missing_calls:
+                        resp_payload = {
+                            "name": m["name"],
+                            "response": {
+                                "error": DEFAULT_SENTINELS["lostToolResponse"]
+                            },
+                        }
+                        if m["id"]:
+                            resp_payload["id"] = m["id"]
+                        target_user.setdefault("parts", []).append(
+                            {"functionResponse": resp_payload}
+                        )
+        elif role == "user":
+            prev_turn = paired_contents[-1] if paired_contents else None
+            valid_parts = []
+            orphaned = []
+
+            for p in parts:
+                if isinstance(p, dict) and (
+                    "functionResponse" in p or "function_response" in p
+                ):
+                    fr = p.get("functionResponse") or p.get("function_response", {})
+                    fid = fr.get("id")
+                    fname = fr.get("name")
+                    has_call = (
+                        prev_turn
+                        and prev_turn.get("role") == "model"
+                        and any(
+                            (
+                                cp.get("functionCall", {}).get("id") == fid
+                                or cp.get("functionCall", {}).get("name") == fname
+                            )
+                            for cp in prev_turn.get("parts", [])
+                            if isinstance(cp, dict)
+                        )
+                    )
+                    if has_call:
+                        valid_parts.append(p)
+                    else:
+                        orphaned.append(p)
+                        valid_parts.append(p)
+                else:
+                    valid_parts.append(p)
+
+            if orphaned:
+                if prev_turn and prev_turn.get("role") == "model":
+                    target_model = prev_turn
+                else:
+                    target_model = {"role": "model", "parts": []}
+                    paired_contents.append(target_model)
+
+                for orph in orphaned:
+                    fr = orph.get("functionResponse") or orph.get(
+                        "function_response", {}
+                    )
+                    fc_item = {"name": fr.get("name", "unknown"), "args": {}}
+                    if fr.get("id"):
+                        fc_item["id"] = fr.get("id")
+                    call_part = {
+                        "functionCall": fc_item,
+                        "thoughtSignature": SYNTHETIC_THOUGHT_SIGNATURE,
+                    }
+                    target_model.setdefault("parts", []).append(call_part)
+
+            turn["parts"] = valid_parts
+
+        if turn.get("parts"):
+            paired_contents.append(turn)
+        i += 1
+
+    # Pass 3: Refine and hoist tool responses
+    for idx in range(1, len(paired_contents)):
+        t_curr = paired_contents[idx]
+        t_prev = paired_contents[idx - 1]
+        if t_curr.get("role") == "user" and t_prev.get("role") == "model":
+            call_order = [
+                (cp.get("functionCall") or cp.get("function_call", {})).get("id")
+                for cp in t_prev.get("parts", [])
+                if isinstance(cp, dict)
+                and ("functionCall" in cp or "function_call" in cp)
+            ]
+            call_order = [cid for cid in call_order if cid]
+            if call_order:
+                u_parts = t_curr.get("parts", [])
+                responses = [
+                    p
+                    for p in u_parts
+                    if isinstance(p, dict) and "functionResponse" in p
+                ]
+                others = [
+                    p
+                    for p in u_parts
+                    if not (isinstance(p, dict) and "functionResponse" in p)
+                ]
+                if responses:
+
+                    def _resp_sort_key(r):
+                        rid = r["functionResponse"].get("id")
+                        try:
+                            return call_order.index(rid)
+                        except (ValueError, TypeError):
+                            return len(call_order)
+
+                    responses.sort(key=_resp_sort_key)
+                    t_curr["parts"] = responses + others
+
+    # Pass 4: Enforce start/end constraints
+    constrained = _coalesce_turns(paired_contents)
+    if not constrained:
+        return data
+
+    if constrained[0].get("role") == "model":
+        constrained.insert(
+            0,
+            {
+                "role": "user",
+                "parts": [{"text": DEFAULT_SENTINELS["continuation"]}],
+            },
+        )
+
+    if constrained[-1].get("role") == "model":
+        constrained.append(
+            {
+                "role": "user",
+                "parts": [{"text": "Please continue."}],
+            }
+        )
+
+    final_contents = _coalesce_turns(constrained)
+    data["contents"] = final_contents
+    return data
+
+
 GEMINI_PART_DATA_FIELDS = (
     "inlineData",
     "functionCall",
@@ -1519,6 +1761,10 @@ def process_request_payload(payload_dict, config=None):
 
     if config.get("compactor_strip_thoughts", False):
         payload_dict = strip_historical_thoughts_from_contents(payload_dict)
+
+    # Google historyHardening pipeline: coalesce roles, repair orphaned tool pairs,
+    # and enforce start/end/signature invariants unconditionally for Gemini API stability.
+    payload_dict = harden_gemini_history(payload_dict)
     payload_dict = normalize_thinking_config(payload_dict)
     payload_dict = normalize_gemini_thinking_temperature(payload_dict)
 

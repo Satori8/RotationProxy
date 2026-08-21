@@ -1994,30 +1994,91 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                     else:
                                         yield b": ping\n\n"
 
-                                    try:
-                                        cont_req = client.build_request(
-                                            method=request.method,
-                                            url=target_url,
-                                            headers=headers,
-                                            content=cont_body,
-                                            params=current_query_params,
-                                        )
-                                        current_response = await client.send(
-                                            cont_req, stream=True
-                                        )
-                                        if current_response.status_code >= 400:
-                                            logger.warning(
-                                                f"[{candidate_model}] [vpn#{actual_vpn_index}] Auto-Continue request returned HTTP {current_response.status_code}. Stopping continuation."
+                                    continuation_success = False
+                                    retry_keys = list(keys_pool)
+                                    if api_key in retry_keys:
+                                        retry_keys.remove(api_key)
+                                        retry_keys.insert(0, api_key)
+
+                                    max_cont_retries = min(len(retry_keys), 3)
+
+                                    for cont_attempt, cont_key in enumerate(
+                                        retry_keys[:max_cont_retries], start=1
+                                    ):
+                                        if cont_attempt > 1:
+                                            if is_gemini_client:
+                                                yield b"data: {}\n\n"
+                                            else:
+                                                yield b": ping\n\n"
+
+                                        cont_headers = dict(headers)
+                                        if provider_name in (
+                                            "openrouter",
+                                            "mistral",
+                                            "llm7",
+                                            "ollama_cloud",
+                                            "opencode_zen",
+                                            "kaggle",
+                                        ):
+                                            cont_headers["authorization"] = (
+                                                f"Bearer {cont_key}"
                                             )
-                                            await current_response.aclose()
+                                        else:
+                                            cont_headers["x-goog-api-key"] = cont_key
+                                            if not is_gemini_client:
+                                                cont_headers["authorization"] = (
+                                                    f"Bearer {cont_key}"
+                                                )
+
+                                        try:
+                                            cont_req = client.build_request(
+                                                method=request.method,
+                                                url=target_url,
+                                                headers=cont_headers,
+                                                content=cont_body,
+                                                params=current_query_params,
+                                            )
+                                            current_response = await client.send(
+                                                cont_req, stream=True
+                                            )
+                                            if current_response.status_code in (
+                                                429,
+                                                500,
+                                                502,
+                                                503,
+                                                504,
+                                            ):
+                                                k_idx = (
+                                                    keys_pool.index(cont_key) + 1
+                                                    if cont_key in keys_pool
+                                                    else 0
+                                                )
+                                                logger.warning(
+                                                    f"[{candidate_model}] [vpn#{actual_vpn_index}] Key #{k_idx} Auto-Continue returned HTTP {current_response.status_code}. "
+                                                    f"Rotating key and retrying (attempt {cont_attempt}/{max_cont_retries})..."
+                                                )
+                                                mark_cooldown(cont_key, duration=60.0)
+                                                await current_response.aclose()
+                                                continue
+                                            elif current_response.status_code >= 400:
+                                                logger.warning(
+                                                    f"[{candidate_model}] [vpn#{actual_vpn_index}] Auto-Continue request returned HTTP {current_response.status_code}. Stopping continuation."
+                                                )
+                                                await current_response.aclose()
+                                                break
+                                            else:
+                                                continuation_success = True
+                                                break
+                                        except Exception as ce:
+                                            logger.error(
+                                                f"[{candidate_model}] [vpn#{actual_vpn_index}] Failed to send Auto-Continue request: {ce}"
+                                            )
                                             break
-                                        # Loop continues with new stream segment!
-                                        continue
-                                    except Exception as ce:
-                                        logger.error(
-                                            f"[{candidate_model}] [vpn#{actual_vpn_index}] Failed to send Auto-Continue request: {ce}"
-                                        )
+
+                                    if not continuation_success:
                                         break
+                                    # Loop continues with new stream segment!
+                                    continue
                                 else:
                                     # No continuation needed: flush buffers and finish
                                     break
