@@ -927,3 +927,133 @@ def test_extract_leaked_gemini_tool_calls():
             "args": {"tool_name": "ctx_shell", "tool_input": {"command": "dir"}},
         }
     }
+
+
+def test_clean_auto_continuation_turns_gemini():
+    from proxy_core.compactor import clean_auto_continuation_turns
+
+    # Single-hop continuation cleaning:
+    # [User: Task] -> [Model: Part 1] -> [User: Continue] -> [Model: Part 2] -> [User: Follow-up]
+    payload = {
+        "contents": [
+            {"role": "user", "parts": [{"text": "Write a story."}]},
+            {
+                "role": "model",
+                "parts": [
+                    {"thought": True, "text": "Thinking..."},
+                    {"text": "Once upon a time,"},
+                ],
+            },
+            {"role": "user", "parts": [{"text": "Continue"}]},
+            {"role": "model", "parts": [{"text": " in a distant galaxy."}]},
+            {"role": "user", "parts": [{"text": "What happened next?"}]},
+        ]
+    }
+
+    cleaned = clean_auto_continuation_turns(payload)
+    contents = cleaned["contents"]
+
+    # Must collapse to: [User] -> [Model Part 1+2] -> [User Follow-up]
+    assert len(contents) == 3
+    assert contents[0]["role"] == "user"
+    assert contents[0]["parts"][0]["text"] == "Write a story."
+
+    assert contents[1]["role"] == "model"
+    # Thought must be preserved and text concatenated
+    assert contents[1]["parts"][0]["thought"] is True
+    assert contents[1]["parts"][0]["text"] == "Thinking..."
+    assert contents[1]["parts"][1]["text"] == "Once upon a time, in a distant galaxy."
+
+    assert contents[2]["role"] == "user"
+    assert contents[2]["parts"][0]["text"] == "What happened next?"
+
+
+def test_clean_auto_continuation_turns_multi_hop_gemini():
+    from proxy_core.compactor import clean_auto_continuation_turns
+
+    # Multi-hop continuation cleaning: 2 continuation hops in a row
+    payload = {
+        "contents": [
+            {"role": "user", "parts": [{"text": "Generate 1..3"}]},
+            {"role": "model", "parts": [{"text": "1"}]},
+            {"role": "user", "parts": [{"text": "Please continue."}]},
+            {"role": "model", "parts": [{"text": ", 2"}]},
+            {"role": "user", "parts": [{"text": "keep going"}]},
+            {"role": "model", "parts": [{"text": ", 3."}]},
+            {"role": "user", "parts": [{"text": "Done!"}]},
+        ]
+    }
+
+    cleaned = clean_auto_continuation_turns(payload)
+    contents = cleaned["contents"]
+
+    assert len(contents) == 3
+    assert contents[0]["role"] == "user"
+    assert contents[1]["role"] == "model"
+    assert contents[1]["parts"][0]["text"] == "1, 2, 3."
+    assert contents[2]["role"] == "user"
+    assert contents[2]["parts"][0]["text"] == "Done!"
+
+
+def test_clean_auto_continuation_turns_openai():
+    from proxy_core.compactor import clean_auto_continuation_turns
+
+    payload = {
+        "messages": [
+            {"role": "user", "content": "Write code."},
+            {
+                "role": "assistant",
+                "content": "def run():\n",
+                "reasoning_content": "Plan step 1",
+            },
+            {"role": "user", "content": "Continue"},
+            {
+                "role": "assistant",
+                "content": "    return 42\n",
+                "reasoning_content": "Plan step 2",
+            },
+            {"role": "user", "content": "Test it."},
+        ]
+    }
+
+    cleaned = clean_auto_continuation_turns(payload)
+    messages = cleaned["messages"]
+
+    assert len(messages) == 3
+    assert messages[0]["role"] == "user"
+    assert messages[1]["role"] == "assistant"
+    assert messages[1]["content"] == "def run():\n    return 42\n"
+    assert messages[1]["reasoning_content"] == "Plan step 1Plan step 2"
+    assert messages[2]["role"] == "user"
+
+
+def test_clean_auto_continuation_turns_preserves_real_user_prompts():
+    from proxy_core.compactor import clean_auto_continuation_turns
+
+    # Legitimate user prompts containing the word 'continue' must NOT be dropped
+    payload = {
+        "contents": [
+            {"role": "user", "parts": [{"text": "Explain Python."}]},
+            {"role": "model", "parts": [{"text": "Python is a high-level language."}]},
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": "Please continue explaining why dynamic typing is useful, and compare it to Rust."
+                    }
+                ],
+            },
+            {
+                "role": "model",
+                "parts": [{"text": "Dynamic typing allows fast prototyping..."}],
+            },
+        ]
+    }
+
+    cleaned = clean_auto_continuation_turns(payload)
+    contents = cleaned["contents"]
+
+    # All 4 turns must remain intact
+    assert len(contents) == 4
+    assert contents[2]["role"] == "user"
+    assert "compare it to Rust" in contents[2]["parts"][0]["text"]

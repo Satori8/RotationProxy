@@ -874,6 +874,179 @@ DEFAULT_SENTINELS = {
     "lostToolResponse": "The tool execution result was lost due to context management truncation.",
 }
 
+CONTINUATION_PROMPTS = frozenset(
+    {
+        "continue",
+        "continue.",
+        "continue!",
+        "please continue",
+        "please continue.",
+        "please continue!",
+        "go on",
+        "go on.",
+        "keep going",
+        "keep going.",
+        "continue generating",
+        "continue the response",
+        "continue response",
+        "продолжай",
+        "продолжай.",
+        "продолжай!",
+        "продолжи",
+        "продолжи.",
+        "продолжи!",
+        "продолжайте",
+        "продолжайте.",
+        "продолжайте!",
+        "[continuing from previous ai thoughts...]",
+    }
+)
+
+
+def is_continuation_prompt(text: str) -> bool:
+    if not isinstance(text, str):
+        return False
+    norm = text.strip().lower()
+    if norm in CONTINUATION_PROMPTS:
+        return True
+    import re
+
+    return bool(
+        re.match(
+            r"^[\s\.\!\?,]*(please\s+)?(continue|go\s+on|keep\s+going|продолжай|продолжи|продолжайте)(\s+(generating|the\s+response|writing|response))?[\s\.\!\?,]*$",
+            norm,
+        )
+    )
+
+
+def clean_gemini_contents_continuations(contents: list) -> list:
+    if not contents or len(contents) < 3:
+        return contents
+
+    cleaned = []
+    i = 0
+    while i < len(contents):
+        turn = contents[i]
+        # Check if turn is a synthetic continuation user prompt between two model turns
+        if (
+            i > 0
+            and i + 1 < len(contents)
+            and isinstance(turn, dict)
+            and turn.get("role") == "user"
+            and cleaned
+            and cleaned[-1].get("role") == "model"
+            and isinstance(contents[i + 1], dict)
+            and contents[i + 1].get("role") == "model"
+        ):
+            parts = turn.get("parts", [])
+            # Must be a pure text part matching continuation prompt, with no functionResponse
+            is_pure_cont = (
+                len(parts) == 1
+                and isinstance(parts[0], dict)
+                and "text" in parts[0]
+                and is_continuation_prompt(parts[0].get("text", ""))
+                and not any(
+                    "functionResponse" in p or "function_response" in p
+                    for p in parts
+                    if isinstance(p, dict)
+                )
+            )
+            if is_pure_cont:
+                # Merge contents[i + 1] into cleaned[-1] (the previous model turn)
+                prev_model = cleaned[-1]
+                next_model = contents[i + 1]
+
+                prev_parts = prev_model.setdefault("parts", [])
+                next_parts = next_model.get("parts", [])
+
+                # Merge text parts if adjacent
+                for np in next_parts:
+                    if not isinstance(np, dict):
+                        prev_parts.append(np)
+                        continue
+                    # If previous last part is text and new part is text, concatenate
+                    if (
+                        "text" in np
+                        and not np.get("thought")
+                        and prev_parts
+                        and isinstance(prev_parts[-1], dict)
+                        and "text" in prev_parts[-1]
+                        and not prev_parts[-1].get("thought")
+                    ):
+                        prev_parts[-1]["text"] = prev_parts[-1]["text"] + np["text"]
+                    else:
+                        prev_parts.append(np)
+
+                # Skip the user continuation turn (i) and the next model turn (i + 1)
+                i += 2
+                continue
+
+        cleaned.append(turn)
+        i += 1
+    return cleaned
+
+
+def clean_openai_messages_continuations(messages: list) -> list:
+    if not messages or len(messages) < 3:
+        return messages
+
+    cleaned = []
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+        if (
+            i > 0
+            and i + 1 < len(messages)
+            and isinstance(msg, dict)
+            and msg.get("role") == "user"
+            and cleaned
+            and cleaned[-1].get("role") == "assistant"
+            and isinstance(messages[i + 1], dict)
+            and messages[i + 1].get("role") == "assistant"
+        ):
+            content = msg.get("content", "")
+            if isinstance(content, str) and is_continuation_prompt(content):
+                prev_asst = cleaned[-1]
+                next_asst = messages[i + 1]
+
+                prev_content = prev_asst.get("content", "") or ""
+                next_content = next_asst.get("content", "") or ""
+                prev_asst["content"] = prev_content + next_content
+
+                if "reasoning_content" in next_asst:
+                    prev_asst["reasoning_content"] = (
+                        prev_asst.get("reasoning_content", "") or ""
+                    ) + next_asst["reasoning_content"]
+
+                i += 2
+                continue
+
+        cleaned.append(msg)
+        i += 1
+    return cleaned
+
+
+def clean_auto_continuation_turns(data: dict) -> dict:
+    """
+    Cleans synthetic Auto-Continue artifacts from conversation history on subsequent turns.
+    Collapses fragmented [Model Turn 1] -> [User: 'Continue'] -> [Model Turn 2] sequences
+    into a single unified [Model Turn 1 + 2], removing intermediate continuation prompts.
+    Supports both Gemini `contents` and OpenAI `messages` schemas, handling multi-hop chains.
+    """
+    if "contents" in data and isinstance(data["contents"], list):
+        prev_len = -1
+        while len(data["contents"]) != prev_len:
+            prev_len = len(data["contents"])
+            data["contents"] = clean_gemini_contents_continuations(data["contents"])
+
+    if "messages" in data and isinstance(data["messages"], list):
+        prev_len = -1
+        while len(data["messages"]) != prev_len:
+            prev_len = len(data["messages"])
+            data["messages"] = clean_openai_messages_continuations(data["messages"])
+
+    return data
+
 
 def harden_gemini_history(data: dict) -> dict:
     """
@@ -1815,6 +1988,9 @@ def process_request_payload(payload_dict, config=None):
     state.COMPACTOR_COMP_TOKENS = (
         getattr(state, "COMPACTOR_COMP_TOKENS", 0) + final_tokens
     )
+
+    # Clean synthetic Auto-Continue intermediate turns from conversation history
+    payload_dict = clean_auto_continuation_turns(payload_dict)
 
     # Split merged functionCall+text parts (SDK serialization bug workaround).
     # Runs unconditionally: it only repairs invalid payloads and is independent
