@@ -334,15 +334,24 @@ class ProxyGUI(ctk.CTk):
             font=ctk.CTkFont(size=10),
         )
         self.max_auto_continue_label.pack(side="left", padx=(0, 5))
-        self.max_auto_continue_dropdown = ctk.CTkOptionMenu(
+        self.max_auto_continue_entry = ctk.CTkEntry(
             self.max_auto_continue_frame,
-            values=["1", "2", "3", "4", "5"],
-            width=60,
+            width=45,
             height=22,
-            command=self.on_max_auto_continues_change,
+            font=ctk.CTkFont(size=10),
+            justify="center",
         )
-        self.max_auto_continue_dropdown.set(str(config.get("max_auto_continues", 2)))
-        self.max_auto_continue_dropdown.pack(side="left")
+        self.max_auto_continue_entry.insert(0, str(config.get("max_auto_continues", 2)))
+        self.max_auto_continue_entry.pack(side="left")
+        self.max_auto_continue_entry.bind(
+            "<KeyRelease>", lambda event: self.on_max_auto_continues_change(event)
+        )
+        self.max_auto_continue_entry.bind(
+            "<FocusOut>", lambda event: self.on_max_auto_continues_change(event)
+        )
+        self.max_auto_continue_entry.bind(
+            "<Return>", lambda event: self.on_max_auto_continues_change(event)
+        )
 
         self.model_rotation_var = ctk.BooleanVar(
             value=config.get("enable_model_rotation", False)
@@ -877,13 +886,22 @@ class ProxyGUI(ctk.CTk):
         logger.info(f"Truncation Detection set to: {val}")
         log_queue.put(f"[GUI] Truncation Detection set to: {val}")
 
-    def on_max_auto_continues_change(self, val):
+    def on_max_auto_continues_change(self, event=None):
         try:
+            val_str = self.max_auto_continue_entry.get().strip()
+            if not val_str:
+                return
+            val = int(val_str)
+            if val < 1:
+                val = 1
             cfg = load_rotation_config()
-            cfg["max_auto_continues"] = int(val)
+            cfg["max_auto_continues"] = val
             save_rotation_config(cfg)
             logger.info(f"[GUI] Max Auto-Continues set to {val}")
             log_queue.put(f"[GUI] Max Auto-Continues set to {val}")
+        except ValueError:
+            # Ignore temporary invalid non-integer keystrokes while typing
+            pass
         except Exception as e:
             logger.error(f"[GUI] Failed to set max_auto_continues: {e}")
 
