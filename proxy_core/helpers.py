@@ -991,6 +991,216 @@ TRUNCATED_KEYWORDS = {
     "namespace",
 }
 
+# Trailing grammatical continuation words (articles, prepositions, conjunctions, pronouns, open adverbs/gerunds)
+TRAILING_CONTINUATION_WORDS = {
+    "a",
+    "an",
+    "the",
+    "this",
+    "that",
+    "these",
+    "those",
+    "which",
+    "whose",
+    "each",
+    "every",
+    "some",
+    "any",
+    "such",
+    "of",
+    "to",
+    "in",
+    "for",
+    "on",
+    "with",
+    "at",
+    "by",
+    "from",
+    "up",
+    "about",
+    "into",
+    "over",
+    "after",
+    "under",
+    "above",
+    "through",
+    "between",
+    "before",
+    "behind",
+    "beyond",
+    "during",
+    "without",
+    "within",
+    "along",
+    "across",
+    "since",
+    "until",
+    "via",
+    "onto",
+    "upon",
+    "toward",
+    "towards",
+    "and",
+    "or",
+    "but",
+    "nor",
+    "so",
+    "yet",
+    "because",
+    "although",
+    "though",
+    "while",
+    "where",
+    "when",
+    "why",
+    "how",
+    "if",
+    "unless",
+    "as",
+    "than",
+    "whether",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "have",
+    "has",
+    "had",
+    "having",
+    "do",
+    "does",
+    "did",
+    "doing",
+    "will",
+    "would",
+    "shall",
+    "should",
+    "can",
+    "could",
+    "may",
+    "might",
+    "must",
+    "automatically",
+    "manually",
+    "directly",
+    "properly",
+    "specifically",
+    "dynamically",
+    "using",
+    "including",
+    "defining",
+    "creating",
+    "implementing",
+    "providing",
+    "allowing",
+    "enabling",
+    "generating",
+    "в",
+    "во",
+    "на",
+    "с",
+    "со",
+    "по",
+    "к",
+    "ко",
+    "из",
+    "изо",
+    "от",
+    "ото",
+    "у",
+    "о",
+    "об",
+    "обо",
+    "за",
+    "под",
+    "подо",
+    "над",
+    "надо",
+    "перед",
+    "передо",
+    "при",
+    "через",
+    "для",
+    "до",
+    "без",
+    "безо",
+    "сквозь",
+    "между",
+    "среди",
+    "около",
+    "возле",
+    "вдоль",
+    "поперек",
+    "вокруг",
+    "про",
+    "и",
+    "или",
+    "но",
+    "а",
+    "да",
+    "если",
+    "то",
+    "что",
+    "чтобы",
+    "как",
+    "где",
+    "когда",
+    "почему",
+    "зачем",
+    "также",
+    "тоже",
+    "хотя",
+    "пока",
+    "будто",
+    "словно",
+    "бы",
+    "же",
+    "ли",
+    "ведь",
+    "даже",
+    "только",
+    "лишь",
+    "который",
+    "которая",
+    "которое",
+    "которые",
+    "которого",
+    "которой",
+    "которых",
+    "которому",
+    "которым",
+    "какой",
+    "какая",
+    "какое",
+    "какие",
+    "чей",
+    "чья",
+    "чье",
+    "чьи",
+    "этот",
+    "эта",
+    "это",
+    "эти",
+    "тот",
+    "та",
+    "то",
+    "те",
+    "автоматически",
+    "вручную",
+    "напрямую",
+    "динамически",
+    "специально",
+    "используя",
+    "включая",
+    "создавая",
+    "реализуя",
+    "предоставляя",
+    "позволяя",
+}
+
 # Trailing code operators (excluding table boundary '|')
 TRAILING_OPERATORS = (
     ",",
@@ -1089,14 +1299,16 @@ def is_response_text_truncated(text: str) -> tuple[bool, str]:
         )
         return True, reason
 
-    # 4. Trailing unfinished language keywords
+    # 4. Trailing unfinished language keywords or continuation words
     words = stripped.split()
-    if words and words[-1].lower() in TRUNCATED_KEYWORDS:
-        reason = "TRAILING_KEYWORD"
-        logger.info(
-            f"[Truncation Detection] Truncated output detected (Rule: {reason}, tail: {repr(stripped[-60:])})"
-        )
-        return True, reason
+    if words:
+        last_word = words[-1].lower().strip(" \t\r\n`'\"")
+        if last_word in TRUNCATED_KEYWORDS or last_word in TRAILING_CONTINUATION_WORDS:
+            reason = "TRAILING_KEYWORD"
+            logger.info(
+                f"[Truncation Detection] Truncated output detected (Rule: {reason}, word: '{last_word}', tail: {repr(stripped[-60:])})"
+            )
+            return True, reason
 
     # 5. Unbalanced code delimiters (open > closed)
     open_parens = stripped.count("(") - stripped.count(")")
@@ -1117,7 +1329,7 @@ def is_response_text_truncated(text: str) -> tuple[bool, str]:
         return True, reason
 
     # 6. Long response ending mid-sentence without terminal punctuation
-    if len(stripped) >= 100:
+    if len(stripped) >= 60:
         lines = stripped.splitlines()
         last_line = lines[-1].strip() if lines else ""
 
@@ -1128,11 +1340,28 @@ def is_response_text_truncated(text: str) -> tuple[bool, str]:
             if cat in ("So", "Sm", "Sk"):
                 return False, ""
 
-            # Check if last line is a markdown header or any numbered/bullet list item
-            if last_line.startswith(("#", "-", "*", ">")) or re.match(
-                r"^\d+\.", last_line
-            ):
-                return False, ""
+            # Check if last line is a markdown header or bullet/numbered list item
+            is_list_or_header = last_line.startswith(("#", "-", "*", ">")) or bool(
+                re.match(r"^\d+\.", last_line)
+            )
+            if is_list_or_header:
+                # Strip list/header prefix (e.g. "1. ", "## ", "- ") to get clean content
+                content = re.sub(r"^(#+|-|\*|>|\d+\.)\s*", "", last_line).strip()
+                last_word = (
+                    content.split()[-1].lower().strip(" \t\r\n`'\"")
+                    if content.split()
+                    else ""
+                )
+                is_continuation = (
+                    last_word in TRUNCATED_KEYWORDS
+                    or last_word in TRAILING_CONTINUATION_WORDS
+                )
+
+                # A list item / header without terminal punctuation is ONLY exempt
+                # if it is a concise title/label (<= 50 chars) and does NOT end with
+                # an incomplete continuation word or keyword.
+                if len(content) <= 50 and not is_continuation:
+                    return False, ""
 
             reason = "INCOMPLETE_SENTENCE"
             logger.info(

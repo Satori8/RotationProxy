@@ -857,7 +857,7 @@ def test_is_response_text_truncated():
     assert reason in ("UNBALANCED_DELIMITERS", "TRAILING_CODE_SYNTAX")
 
     # 6. Incomplete sentence in long text
-    long_text = "This is a comprehensive overview of the architecture and workflow system describing how components interact and cut off because"
+    long_text = "This is a comprehensive overview of the architecture and workflow system describing how components interact and cut off suddenly"
     trunc, reason = is_response_text_truncated(long_text)
     assert trunc is True
     assert reason == "INCOMPLETE_SENTENCE"
@@ -900,11 +900,29 @@ def test_is_response_text_truncated():
     )
     assert is_response_text_truncated(russian_ellipsis_text)[0] is False
 
-    # 13. Response ending with an emoji is NOT truncated
+    # 13. Cut off list item on continuation word (user snippet case)
+    user_snippet = (
+        "AUTH_SECRET_KEY=lapp_auth_secret_key_session_token_secure_change_me\n"
+        "AUTH_COOKIE_NAME=lapp_auth_session\n"
+        "AUTH_SESSION_EXPIRE_DAYS=30\n"
+        "Key Highlights:\n"
+        "1. Dynamic Environment Variable Loading: Pydantic's BaseSettings automatically"
+    )
+    trunc, reason = is_response_text_truncated(user_snippet)
+    assert trunc is True
+    assert reason in ("TRAILING_KEYWORD", "INCOMPLETE_SENTENCE")
+
+    # 14. List item ending with preposition
+    list_prep_text = "Steps to perform:\n- Configure the database connection with"
+    trunc, reason = is_response_text_truncated(list_prep_text)
+    assert trunc is True
+    assert reason in ("TRAILING_KEYWORD", "INCOMPLETE_SENTENCE")
+
+    # 15. Response ending with an emoji is NOT truncated
     emoji_text = "Все задачи успешно завершены и проверены тестами! 👍"
     assert is_response_text_truncated(emoji_text)[0] is False
 
-    # 14. Delimiter balance with smiley is NOT truncated
+    # 16. Delimiter balance with smiley is NOT truncated
     smiley_text = "This is a complete explanation of the feature and how to use it in your project :)"
     assert is_response_text_truncated(smiley_text)[0] is False
 
