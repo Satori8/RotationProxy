@@ -1710,6 +1710,8 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                         finish_reasons = set()
                         thought_signatures = []
                         thought_text_buffer = []
+                        prev_segment_text = None
+                        prev_segment_thoughts = None
                         reader_task = None
 
                         try:
@@ -1945,35 +1947,29 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                     )
                                 )
 
-                                # Loop prevention: skip continuation if identical to previous attempt
-                                prev_text = getattr(stream_generator, "_prev_text", "")
-                                prev_thoughts = getattr(
-                                    stream_generator, "_prev_thoughts", ""
-                                )
+                                # Loop prevention: only evaluate when continuation is actually applicable
                                 if (
-                                    resp_text_clean == prev_text
-                                    and thought_text_clean == prev_thoughts
+                                    auto_continue_enabled
+                                    and not has_tool_calls
+                                    and has_anomaly
+                                    and (auto_continue_count < max_auto_continues)
                                 ):
-                                    logger.warning(
-                                        f"[{candidate_model}] [vpn#{actual_vpn_index}] [Auto-Continue] "
-                                        "Skipping duplicate continuation attempt (identical text/thoughts)."
-                                    )
-                                    should_continue = False
+                                    if (
+                                        prev_segment_text is not None
+                                        and resp_text_clean == prev_segment_text
+                                        and thought_text_clean == prev_segment_thoughts
+                                    ):
+                                        logger.warning(
+                                            f"[{candidate_model}] [vpn#{actual_vpn_index}] [Auto-Continue] "
+                                            "Skipping duplicate continuation attempt (identical text/thoughts produced in continuation hop)."
+                                        )
+                                        should_continue = False
+                                    else:
+                                        prev_segment_text = resp_text_clean
+                                        prev_segment_thoughts = thought_text_clean
+                                        should_continue = True
                                 else:
-                                    setattr(
-                                        stream_generator, "_prev_text", resp_text_clean
-                                    )
-                                    setattr(
-                                        stream_generator,
-                                        "_prev_thoughts",
-                                        thought_text_clean,
-                                    )
-                                    should_continue = (
-                                        auto_continue_enabled
-                                        and not has_tool_calls
-                                        and has_anomaly
-                                        and (auto_continue_count < max_auto_continues)
-                                    )
+                                    should_continue = False
 
                                 if should_continue:
                                     auto_continue_count += 1

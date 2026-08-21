@@ -1119,3 +1119,128 @@ def test_clean_auto_continuation_turns_preserves_real_user_prompts():
     assert len(contents) == 4
     assert contents[2]["role"] == "user"
     assert "compare it to Rust" in contents[2]["parts"][0]["text"]
+
+
+def test_auto_continue_loop_prevention_logic():
+    # Simulates the auto-continue loop prevention decision logic in server.py
+    def evaluate_continuation(
+        auto_continue_enabled,
+        has_tool_calls,
+        has_anomaly,
+        auto_continue_count,
+        max_auto_continues,
+        resp_text_clean,
+        thought_text_clean,
+        prev_segment_text,
+        prev_segment_thoughts,
+    ):
+        if (
+            auto_continue_enabled
+            and not has_tool_calls
+            and has_anomaly
+            and (auto_continue_count < max_auto_continues)
+        ):
+            if (
+                prev_segment_text is not None
+                and resp_text_clean == prev_segment_text
+                and thought_text_clean == prev_segment_thoughts
+            ):
+                return False, prev_segment_text, prev_segment_thoughts, True
+            else:
+                prev_segment_text = resp_text_clean
+                prev_segment_thoughts = thought_text_clean
+                return True, prev_segment_text, prev_segment_thoughts, False
+        else:
+            return False, prev_segment_text, prev_segment_thoughts, False
+
+    # Criteria not met (has_anomaly=False or has_tool_calls=True) -> should_continue evaluates to False without duplicate warning
+    prev_text, prev_thoughts = None, None
+    should_continue, prev_text, prev_thoughts, duplicate_detected = (
+        evaluate_continuation(
+            auto_continue_enabled=True,
+            has_tool_calls=False,
+            has_anomaly=False,
+            auto_continue_count=0,
+            max_auto_continues=2,
+            resp_text_clean="",
+            thought_text_clean="",
+            prev_segment_text=prev_text,
+            prev_segment_thoughts=prev_thoughts,
+        )
+    )
+    assert not should_continue
+    assert not duplicate_detected
+    assert prev_text is None
+    assert prev_thoughts is None
+
+    should_continue, prev_text, prev_thoughts, duplicate_detected = (
+        evaluate_continuation(
+            auto_continue_enabled=True,
+            has_tool_calls=True,
+            has_anomaly=True,
+            auto_continue_count=0,
+            max_auto_continues=2,
+            resp_text_clean="partial text",
+            thought_text_clean="thinking",
+            prev_segment_text=prev_text,
+            prev_segment_thoughts=prev_thoughts,
+        )
+    )
+    assert not should_continue
+    assert not duplicate_detected
+    assert prev_text is None
+
+    # Criteria met -> Initial continuation hop succeeds
+    should_continue, prev_text, prev_thoughts, duplicate_detected = (
+        evaluate_continuation(
+            auto_continue_enabled=True,
+            has_tool_calls=False,
+            has_anomaly=True,
+            auto_continue_count=0,
+            max_auto_continues=2,
+            resp_text_clean="initial text",
+            thought_text_clean="initial thoughts",
+            prev_segment_text=prev_text,
+            prev_segment_thoughts=prev_thoughts,
+        )
+    )
+    assert should_continue is True
+    assert not duplicate_detected
+    assert prev_text == "initial text"
+    assert prev_thoughts == "initial thoughts"
+
+    # Subsequent identical hop -> detected as duplicate and skipped (should_continue=False)
+    should_continue, prev_text, prev_thoughts, duplicate_detected = (
+        evaluate_continuation(
+            auto_continue_enabled=True,
+            has_tool_calls=False,
+            has_anomaly=True,
+            auto_continue_count=1,
+            max_auto_continues=2,
+            resp_text_clean="initial text",
+            thought_text_clean="initial thoughts",
+            prev_segment_text=prev_text,
+            prev_segment_thoughts=prev_thoughts,
+        )
+    )
+    assert should_continue is False
+    assert duplicate_detected is True
+    assert prev_text == "initial text"
+
+    # Subsequent hop with modified text/thoughts continues (should_continue=True)
+    should_continue, prev_text, prev_thoughts, duplicate_detected = (
+        evaluate_continuation(
+            auto_continue_enabled=True,
+            has_tool_calls=False,
+            has_anomaly=True,
+            auto_continue_count=1,
+            max_auto_continues=2,
+            resp_text_clean="extended text",
+            thought_text_clean="initial thoughts",
+            prev_segment_text=prev_text,
+            prev_segment_thoughts=prev_thoughts,
+        )
+    )
+    assert should_continue is True
+    assert not duplicate_detected
+    assert prev_text == "extended text"
