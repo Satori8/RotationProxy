@@ -736,6 +736,78 @@ def flush_tool_calls_to_gemini(tool_call_acc: dict) -> tuple[str, bool]:
     return (f"data: {json.dumps(gemini_data, ensure_ascii=False)}", True)
 
 
+def extract_leaked_gemini_tool_calls(text: str) -> tuple[str, list[dict]]:
+    """
+    Detects and extracts Gemini internal raw tool-call tokens (e.g. 'tool_nameuseeland{...}'
+    or 'call:tool_name{...}') that leaked into plain text output, converting them back
+    into structured functionCall part objects for client execution.
+
+    Returns:
+        (cleaned_text: str, recovered_function_calls: list[dict])
+    """
+    if not text or (
+        "useeland" not in text and "use_tool" not in text and "call:" not in text
+    ):
+        return text, []
+
+    recovered_calls = []
+    cleaned_text = text
+
+    for keyword in ("useeland", "use_tool"):
+        while keyword in cleaned_text:
+            pos = cleaned_text.find(keyword)
+            # Find the tool name preceding the keyword
+            prefix = cleaned_text[:pos]
+            name_match = re.search(r"([a-zA-Z0-9_\-\.:]+)$", prefix)
+            if not name_match:
+                break
+            fn_name = name_match.group(1).strip()
+            name_start = name_match.start()
+
+            # Find the JSON body starting after keyword
+            after_kw = cleaned_text[pos + len(keyword) :].lstrip()
+            if not after_kw.startswith("{"):
+                break
+
+            # Find matching closing brace
+            brace_depth = 0
+            json_end = -1
+            for idx, ch in enumerate(after_kw):
+                if ch == "{":
+                    brace_depth += 1
+                elif ch == "}":
+                    brace_depth -= 1
+                    if brace_depth == 0:
+                        json_end = idx + 1
+                        break
+
+            if json_end == -1:
+                break
+
+            raw_json = after_kw[:json_end]
+            try:
+                args_dict = json.loads(raw_json)
+            except Exception:
+                args_dict = {"raw": raw_json}
+
+            recovered_calls.append(
+                {"functionCall": {"name": fn_name, "args": args_dict}}
+            )
+
+            # Replace the entire leaked token block from name_start to end of json
+            total_block_len = (
+                (pos - name_start)
+                + len(keyword)
+                + (len(cleaned_text[pos + len(keyword) :]) - len(after_kw))
+                + json_end
+            )
+            cleaned_text = (
+                cleaned_text[:name_start] + cleaned_text[name_start + total_block_len :]
+            ).strip()
+
+    return cleaned_text, recovered_calls
+
+
 def translate_openai_chunk_to_gemini(
     openai_chunk_str: str, tool_call_acc: dict | None = None
 ) -> tuple[str, bool]:
@@ -775,7 +847,12 @@ def translate_openai_chunk_to_gemini(
         if reasoning:
             parts.append({"text": reasoning, "thought": True})
         if content:
-            parts.append({"text": content})
+            # Check if Gemini leaked raw tool tokens into plain text
+            cleaned_content, leaked_calls = extract_leaked_gemini_tool_calls(content)
+            if cleaned_content:
+                parts.append({"text": cleaned_content})
+            if leaked_calls:
+                parts.extend(leaked_calls)
 
         # Accumulate streaming tool calls
         tool_calls = delta.get("tool_calls") or choice.get("tool_calls") or []
@@ -986,7 +1063,14 @@ def is_response_text_truncated(text: str) -> tuple[bool, str]:
         return False, ""
 
     # 1. Unclosed Markdown code blocks (odd number of triple backticks)
-    if stripped.count("```") % 2 == 1:
+    # Exempt valid tool call markers: [Tool Call: ...]
+    if (
+        stripped.endswith("[Tool Call:")
+        or "[Tool Call: " in stripped[-50:]
+        or stripped.endswith("[Tool Call: skill]")
+    ):
+        pass  # Skip unclosed code block check for tool call markers
+    elif stripped.count("```") % 2 == 1:
         reason = "UNCLOSED_CODE_BLOCK"
         logger.info(
             f"[Truncation Detection] Truncated output detected (Rule: {reason}, tail: {repr(stripped[-60:])})"

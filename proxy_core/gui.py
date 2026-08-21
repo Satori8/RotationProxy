@@ -311,6 +311,18 @@ class ProxyGUI(ctk.CTk):
         )
         self.history_hardening_checkbox.pack(anchor="w", padx=10, pady=(3, 3))
 
+        self.truncation_detection_var = ctk.BooleanVar(
+            value=config.get("truncation_detection", True)
+        )
+        self.truncation_detection_checkbox = ctk.CTkCheckBox(
+            self.left_panel,
+            text="Truncation Detection",
+            variable=self.truncation_detection_var,
+            command=self.on_truncation_detection_toggle,
+            font=ctk.CTkFont(size=10, weight="bold"),
+        )
+        self.truncation_detection_checkbox.pack(anchor="w", padx=10, pady=(3, 3))
+
         self.max_auto_continue_frame = ctk.CTkFrame(
             self.left_panel, fg_color="transparent"
         )
@@ -856,6 +868,14 @@ class ProxyGUI(ctk.CTk):
         save_rotation_config(config)
         logger.info(f"History Hardening set to: {val}")
         log_queue.put(f"[GUI] History Hardening set to: {val}")
+
+    def on_truncation_detection_toggle(self):
+        config = load_rotation_config()
+        val = self.truncation_detection_var.get()
+        config["truncation_detection"] = val
+        save_rotation_config(config)
+        logger.info(f"Truncation Detection set to: {val}")
+        log_queue.put(f"[GUI] Truncation Detection set to: {val}")
 
     def on_max_auto_continues_change(self, val):
         try:

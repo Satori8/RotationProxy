@@ -141,6 +141,7 @@ def load_rotation_config() -> dict:
         "history_hardening": True,
         "auto_continue": True,
         "max_auto_continues": 2,
+        "truncation_detection": True,
         "vpn_switching_mode": "disabled",
         "vpn_static_channel": 0,
         "vpn_errors_threshold": 5,

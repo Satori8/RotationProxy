@@ -1,5 +1,5 @@
 {
-  "last_fallback_switch_time": 1787233925.1907446,
+  "last_fallback_switch_time": 1787311642.4377944,
   "primary_model": "gemini-3.6-flash",
   "fallback_model": "gemini-3-flash-preview",
   "model_cooldowns": {},
@@ -10,7 +10,8 @@
     "gemini-3.5-flash": 0,
     "opencode_zen/deepseek-v4-flash-free": 0,
     "zai-glm-5-2": 0,
-    "google/gemini-3.7-flash": 0
+    "google/gemini-3.7-flash": 0,
+    "mistral/mistral-large-latest": 0
   },
   "thinking_models": [
     "gemini-3.6-flash",
@@ -177,8 +178,8 @@
   },
   "use_kaggle": false,
   "force_model": {
-    "all": "auto",
-    "gemini-3.6-flash": "auto"
+    "all": "google/gemini-3.7-flash",
+    "gemini-3.6-flash": "google/gemini-3.7-flash"
   },
   "save_chat_logs": false,
   "vpn_switching_mode": "every_request",
@@ -207,6 +208,7 @@
   "system_vpn_active": false,
   "system_vpn_index": 6,
   "sse_keepalive": true,
-  "auto_continue": true,
-  "max_auto_continues": 2
+  "auto_continue": false,
+  "max_auto_continues": 5,
+  "truncation_detection": true
 }

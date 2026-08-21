@@ -907,3 +907,23 @@ def test_is_response_text_truncated():
     # 14. Delimiter balance with smiley is NOT truncated
     smiley_text = "This is a complete explanation of the feature and how to use it in your project :)"
     assert is_response_text_truncated(smiley_text)[0] is False
+
+
+def test_extract_leaked_gemini_tool_calls():
+    from proxy_core.helpers import extract_leaked_gemini_tool_calls
+
+    leaked_text = (
+        "Here is the analysis.\n"
+        'lean-ctx_lean-ctx_invoke_tooluseeland{"tool_name": "ctx_shell", "tool_input": {"command": "dir"}}'
+    )
+
+    cleaned_text, recovered_calls = extract_leaked_gemini_tool_calls(leaked_text)
+    assert "useeland" not in cleaned_text
+    assert cleaned_text == "Here is the analysis."
+    assert len(recovered_calls) == 1
+    assert recovered_calls[0] == {
+        "functionCall": {
+            "name": "lean-ctx_lean-ctx_invoke_tool",
+            "args": {"tool_name": "ctx_shell", "tool_input": {"command": "dir"}},
+        }
+    }

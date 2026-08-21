@@ -901,7 +901,10 @@ def harden_gemini_history(data: dict) -> dict:
     if not contents:
         return data
 
-    # Helper: coalesce adjacent roles
+    # Helper: coalesce adjacent roles, but PRESERVE tool response boundaries.
+    # In Gemini API, a user turn responding to a functionCall (containing functionResponse)
+    # must NOT be coalesced with a conversational user text turn, otherwise Gemini's
+    # function-calling state machine breaks and emits raw 'useeland' text tokens.
     def _coalesce_turns(raw_turns):
         coalesced = []
         for t in raw_turns:
@@ -911,8 +914,48 @@ def harden_gemini_history(data: dict) -> dict:
             parts = t.get("parts", [])
             if not parts:
                 continue
-            if coalesced and coalesced[-1].get("role") == role:
-                coalesced[-1]["parts"] = coalesced[-1].get("parts", []) + list(parts)
+
+            has_func_resp = any(
+                isinstance(p, dict)
+                and ("functionResponse" in p or "function_response" in p)
+                for p in parts
+            )
+            has_func_call = any(
+                isinstance(p, dict) and ("functionCall" in p or "function_call" in p)
+                for p in parts
+            )
+
+            prev = coalesced[-1] if coalesced else None
+            prev_role = prev.get("role") if prev else None
+            prev_has_func_resp = (
+                any(
+                    isinstance(p, dict)
+                    and ("functionResponse" in p or "function_response" in p)
+                    for p in prev.get("parts", [])
+                )
+                if prev
+                else False
+            )
+            prev_has_func_call = (
+                any(
+                    isinstance(p, dict)
+                    and ("functionCall" in p or "function_call" in p)
+                    for p in prev.get("parts", [])
+                )
+                if prev
+                else False
+            )
+
+            # Coalesce ONLY if roles match AND tool boundaries are not violated
+            can_coalesce = (
+                prev is not None
+                and prev_role == role
+                and (has_func_resp == prev_has_func_resp)
+                and (has_func_call == prev_has_func_call)
+            )
+
+            if can_coalesce and prev is not None:
+                prev["parts"] = prev.get("parts", []) + list(parts)
             else:
                 coalesced.append({"role": role, "parts": list(parts)})
         return coalesced
@@ -977,11 +1020,21 @@ def harden_gemini_history(data: dict) -> dict:
                         work_contents.insert(i + 1, target_user)
 
                     for m in missing_calls:
+                        # Filter out shell/tool commands to avoid leaking sensitive info
+                        if (
+                            m["name"].startswith("ctx_")
+                            or m["name"] == "bash"
+                            or m["name"] == "lean-ctx_lean-ctx_invoke_tool"
+                            or m["name"] == "skill"
+                            or m["name"] == "task"
+                        ):
+                            synthetic_text = "[Tool Response: OK]"
+                        else:
+                            synthetic_text = DEFAULT_SENTINELS["lostToolResponse"]
+
                         resp_payload = {
                             "name": m["name"],
-                            "response": {
-                                "error": DEFAULT_SENTINELS["lostToolResponse"]
-                            },
+                            "response": {"error": synthetic_text},
                         }
                         if m["id"]:
                             resp_payload["id"] = m["id"]
@@ -1097,12 +1150,21 @@ def harden_gemini_history(data: dict) -> dict:
         )
 
     if constrained[-1].get("role") == "model":
-        constrained.append(
-            {
-                "role": "user",
-                "parts": [{"text": "Please continue."}],
-            }
+        # If the last model turn ended with a functionCall, it is actively waiting
+        # for a functionResponse! Do NOT append a text 'Please continue.' turn,
+        # as that breaks the tool-calling handshake and causes raw 'useeland' leaks.
+        last_parts = constrained[-1].get("parts", [])
+        has_last_call = any(
+            isinstance(p, dict) and ("functionCall" in p or "function_call" in p)
+            for p in last_parts
         )
+        if not has_last_call:
+            constrained.append(
+                {
+                    "role": "user",
+                    "parts": [{"text": "Please continue."}],
+                }
+            )
 
     final_contents = _coalesce_turns(constrained)
     data["contents"] = final_contents

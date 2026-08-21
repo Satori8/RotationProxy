@@ -1920,9 +1920,16 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                         "PROHIBITED_CONTENT",
                                     )
                                 )
-                                is_truncated, truncation_reason = (
-                                    is_response_text_truncated(resp_text_clean)
+                                cfg = load_rotation_config()
+                                truncation_detection_enabled = cfg.get(
+                                    "truncation_detection", True
                                 )
+                                is_truncated = False
+                                truncation_reason = ""
+                                if truncation_detection_enabled:
+                                    is_truncated, truncation_reason = (
+                                        is_response_text_truncated(resp_text_clean)
+                                    )
                                 has_anomaly = (
                                     (
                                         "MAX_TOKENS" in finish_reasons
@@ -1938,12 +1945,35 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                     )
                                 )
 
-                                should_continue = (
-                                    auto_continue_enabled
-                                    and not has_tool_calls
-                                    and has_anomaly
-                                    and (auto_continue_count < max_auto_continues)
+                                # Loop prevention: skip continuation if identical to previous attempt
+                                prev_text = getattr(stream_generator, "_prev_text", "")
+                                prev_thoughts = getattr(
+                                    stream_generator, "_prev_thoughts", ""
                                 )
+                                if (
+                                    resp_text_clean == prev_text
+                                    and thought_text_clean == prev_thoughts
+                                ):
+                                    logger.warning(
+                                        f"[{candidate_model}] [vpn#{actual_vpn_index}] [Auto-Continue] "
+                                        "Skipping duplicate continuation attempt (identical text/thoughts)."
+                                    )
+                                    should_continue = False
+                                else:
+                                    setattr(
+                                        stream_generator, "_prev_text", resp_text_clean
+                                    )
+                                    setattr(
+                                        stream_generator,
+                                        "_prev_thoughts",
+                                        thought_text_clean,
+                                    )
+                                    should_continue = (
+                                        auto_continue_enabled
+                                        and not has_tool_calls
+                                        and has_anomaly
+                                        and (auto_continue_count < max_auto_continues)
+                                    )
 
                                 if should_continue:
                                     auto_continue_count += 1
