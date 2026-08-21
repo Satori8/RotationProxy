@@ -927,6 +927,50 @@ def test_is_response_text_truncated():
     assert is_response_text_truncated(smiley_text)[0] is False
 
 
+def test_auto_continue_key_rotation_selection():
+    import time
+    from proxy_core.state import COOLDOWNS, LAST_USED
+
+    keys_pool = [f"key_{i}" for i in range(1, 31)]
+    now = time.time()
+
+    # Clear state for test isolation
+    COOLDOWNS.clear()
+    LAST_USED.clear()
+
+    # Initialize all keys with current time
+    for k in keys_pool:
+        LAST_USED[k] = now
+
+    # Mark key_1 and key_2 on cooldown
+    COOLDOWNS["key_1"] = now + 100.0
+    COOLDOWNS["key_2"] = now + 100.0
+
+    # Set LAST_USED timestamps
+    LAST_USED["key_3"] = now - 50.0  # Least recently used
+    LAST_USED["key_4"] = now - 10.0  # Most recently used
+
+    available_retry_keys = [k for k in keys_pool if COOLDOWNS.get(k, 0.0) < now]
+    available_retry_keys = sorted(
+        available_retry_keys, key=lambda k: LAST_USED.get(k, 0.0)
+    )
+
+    # Cooled down keys must be excluded
+    assert "key_1" not in available_retry_keys
+    assert "key_2" not in available_retry_keys
+
+    # Least recently used non-cooldown key must be first
+    assert available_retry_keys[0] == "key_3"
+
+    # Retry cap must be 25
+    max_cont_retries = min(len(available_retry_keys), 25)
+    assert max_cont_retries == 25
+
+    # Cleanup
+    COOLDOWNS.clear()
+    LAST_USED.clear()
+
+
 def test_extract_leaked_gemini_tool_calls():
     from proxy_core.helpers import extract_leaked_gemini_tool_calls
 

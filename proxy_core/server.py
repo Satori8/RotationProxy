@@ -2034,15 +2034,41 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                         yield b": ping\n\n"
 
                                     continuation_success = False
-                                    retry_keys = list(keys_pool)
-                                    if api_key in retry_keys:
-                                        retry_keys.remove(api_key)
-                                        retry_keys.insert(0, api_key)
 
-                                    max_cont_retries = min(len(retry_keys), 3)
+                                    # Align with main key selection: filter by cooldown, sort by LAST_USED (LRU)
+                                    now_cont = time.time()
+                                    available_retry_keys = [
+                                        k
+                                        for k in keys_pool
+                                        if COOLDOWNS.get(k, 0.0) < now_cont
+                                    ]
+                                    if not available_retry_keys:
+                                        available_retry_keys = list(keys_pool)
+                                    else:
+                                        available_retry_keys = sorted(
+                                            available_retry_keys,
+                                            key=lambda k: LAST_USED.get(k, 0.0),
+                                        )
+
+                                    # Distribute starting key across parallel channels to match rotation
+                                    if (
+                                        parallelism_enabled
+                                        and len(available_retry_keys) > 1
+                                    ):
+                                        key_idx = actual_vpn_index % len(
+                                            available_retry_keys
+                                        )
+                                        selected_key = available_retry_keys[key_idx]
+                                        available_retry_keys.remove(selected_key)
+                                        available_retry_keys.insert(0, selected_key)
+
+                                    # Set retry cap to 25 attempts
+                                    max_cont_retries = min(
+                                        len(available_retry_keys), 25
+                                    )
 
                                     for cont_attempt, cont_key in enumerate(
-                                        retry_keys[:max_cont_retries], start=1
+                                        available_retry_keys[:max_cont_retries], start=1
                                     ):
                                         if cont_attempt > 1:
                                             if is_gemini_client:
@@ -2077,6 +2103,7 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                                 content=cont_body,
                                                 params=current_query_params,
                                             )
+                                            LAST_USED[cont_key] = time.time()
                                             current_response = await client.send(
                                                 cont_req, stream=True
                                             )
