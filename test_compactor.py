@@ -872,3 +872,38 @@ def test_is_response_text_truncated():
     assert is_response_text_truncated("42")[0] is False
     assert is_response_text_truncated("true")[0] is False
     assert is_response_text_truncated("Done.")[0] is False
+
+    # 9. Markdown table ending with '|' is NOT truncated
+    table_text = (
+        "| Model | Context | Speed |\n|---|---|---|\n| gemini-3.7-flash | 1M | Fast |"
+    )
+    assert is_response_text_truncated(table_text)[0] is False
+
+    # 10. Horizontal rule '---' is NOT truncated
+    hr_text = "Here is the summary of architectural components.\n\n---"
+    assert is_response_text_truncated(hr_text)[0] is False
+
+    # 11. Multi-digit list item without period is NOT truncated
+    numbered_list_text = (
+        "Key architecture principles to remember:\n"
+        "1. First rule\n"
+        "2. Second rule\n"
+        "10. Subagent state tracking and session persistence"
+    )
+    assert is_response_text_truncated(numbered_list_text)[0] is False
+
+    # 12. Non-Latin quotes and ellipsis are NOT truncated
+    russian_quote_text = "Полный ответ на ваш вопрос содержится в официальной документации: «Всё работает штатно»"
+    assert is_response_text_truncated(russian_quote_text)[0] is False
+    russian_ellipsis_text = (
+        "Продолжение диалога и обработка всех входящих запросов в фоновом режиме…"
+    )
+    assert is_response_text_truncated(russian_ellipsis_text)[0] is False
+
+    # 13. Response ending with an emoji is NOT truncated
+    emoji_text = "Все задачи успешно завершены и проверены тестами! 👍"
+    assert is_response_text_truncated(emoji_text)[0] is False
+
+    # 14. Delimiter balance with smiley is NOT truncated
+    smiley_text = "This is a complete explanation of the feature and how to use it in your project :)"
+    assert is_response_text_truncated(smiley_text)[0] is False

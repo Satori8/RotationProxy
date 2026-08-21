@@ -4,6 +4,7 @@ import time
 import os
 import asyncio
 import datetime
+import unicodedata
 from fastapi import Request
 from proxy_core.logger import logger
 
@@ -878,6 +879,97 @@ def add_anomaly_to_state(model: str, msg: str):
         logger.error(f"Failed to add anomaly to state: {e}")
 
 
+# Strict code keywords that unambiguously indicate truncated statements
+TRUNCATED_KEYWORDS = {
+    "def",
+    "class",
+    "import",
+    "from",
+    "return",
+    "yield",
+    "raise",
+    "throw",
+    "function",
+    "const",
+    "let",
+    "var",
+    "if",
+    "elif",
+    "else",
+    "async",
+    "await",
+    "for",
+    "while",
+    "try",
+    "except",
+    "finally",
+    "with",
+    "switch",
+    "interface",
+    "struct",
+    "enum",
+    "fn",
+    "impl",
+    "trait",
+    "namespace",
+}
+
+# Trailing code operators (excluding table boundary '|')
+TRAILING_OPERATORS = (
+    ",",
+    "=",
+    "+",
+    "-",
+    "*",
+    "/",
+    "\\",
+    "->",
+    "=>",
+    "&&",
+    "||",
+    "&",
+    "^",
+    "%",
+    "==",
+    "!=",
+    "<=",
+    ">=",
+)
+
+# Extended terminal characters (including Cyrillic/Unicode punctuation & quotes)
+TERMINAL_CHARS = (
+    ".",
+    "!",
+    "?",
+    ":",
+    ";",
+    '"',
+    "'",
+    "`",
+    ")",
+    "]",
+    "}",
+    ">",
+    "_",
+    "*",
+    "~",
+    "|",
+    "/",
+    "%",
+    "…",
+    "»",
+    "”",
+    "’",
+    "„",
+    "。",
+    "！",
+    "？",
+    "」",
+    "』",
+    "】",
+)
+
+
 def is_response_text_truncated(text: str) -> tuple[bool, str]:
     """
     Detects if generated response text was cut off / truncated mid-stream,
@@ -895,129 +987,73 @@ def is_response_text_truncated(text: str) -> tuple[bool, str]:
 
     # 1. Unclosed Markdown code blocks (odd number of triple backticks)
     if stripped.count("```") % 2 == 1:
-        return True, "UNCLOSED_CODE_BLOCK"
+        reason = "UNCLOSED_CODE_BLOCK"
+        logger.info(
+            f"[Truncation Detection] Truncated output detected (Rule: {reason}, tail: {repr(stripped[-60:])})"
+        )
+        return True, reason
 
-    # 2. Trailing syntax / operators / open brackets
-    trailing_operators = (
-        ",",
-        "=",
-        "+",
-        "-",
-        "*",
-        "/",
-        "\\",
-        "->",
-        "=>",
-        "&&",
-        "||",
-        "&",
-        "|",
-        "^",
-        "%",
-        "==",
-        "!=",
-        "<=",
-        ">=",
-    )
-    if stripped.endswith(trailing_operators) or stripped.endswith(("(", "[", "{")):
-        return True, "TRAILING_CODE_SYNTAX"
+    # 2. Markdown Horizontal Rules (---, ___, ***, --) are complete endings, exempt them
+    if stripped.endswith(("---", "___", "***", "--")):
+        return False, ""
 
-    # 3. Trailing unfinished language keywords
-    keywords = {
-        "def",
-        "class",
-        "import",
-        "from",
-        "return",
-        "function",
-        "const",
-        "let",
-        "var",
-        "if",
-        "elif",
-        "else",
-        "async",
-        "await",
-        "for",
-        "while",
-        "try",
-        "except",
-        "finally",
-        "with",
-        "switch",
-        "case",
-        "public",
-        "private",
-        "protected",
-        "interface",
-        "type",
-        "struct",
-        "enum",
-        "fn",
-        "impl",
-        "trait",
-        "val",
-        "package",
-        "namespace",
-    }
+    # 3. Trailing syntax / operators / open brackets (excluding single '|')
+    if stripped.endswith(TRAILING_OPERATORS) or stripped.endswith(("(", "[", "{")):
+        reason = "TRAILING_CODE_SYNTAX"
+        logger.info(
+            f"[Truncation Detection] Truncated output detected (Rule: {reason}, tail: {repr(stripped[-60:])})"
+        )
+        return True, reason
+
+    # 4. Trailing unfinished language keywords
     words = stripped.split()
-    if words and words[-1].lower() in keywords:
-        return True, "TRAILING_KEYWORD"
+    if words and words[-1].lower() in TRUNCATED_KEYWORDS:
+        reason = "TRAILING_KEYWORD"
+        logger.info(
+            f"[Truncation Detection] Truncated output detected (Rule: {reason}, tail: {repr(stripped[-60:])})"
+        )
+        return True, reason
 
-    # 4. Unbalanced code delimiters (open > closed)
+    # 5. Unbalanced code delimiters (open > closed)
+    open_parens = stripped.count("(") - stripped.count(")")
+    open_brackets = stripped.count("[") - stripped.count("]")
+    open_braces = stripped.count("{") - stripped.count("}")
+
+    # Exclude single unmatched paren/bracket if response ends with clean punctuation (smileys/regex)
+    is_cleanly_punctuated = stripped.endswith((".", "!", "?", "\n", "```"))
     if (
-        stripped.count("(") > stripped.count(")")
-        or stripped.count("[") > stripped.count("]")
-        or stripped.count("{") > stripped.count("}")
+        (open_parens > 1 or (open_parens > 0 and not is_cleanly_punctuated))
+        or (open_brackets > 1 or (open_brackets > 0 and not is_cleanly_punctuated))
+        or (open_braces > 0)
     ):
-        return True, "UNBALANCED_DELIMITERS"
+        reason = "UNBALANCED_DELIMITERS"
+        logger.info(
+            f"[Truncation Detection] Truncated output detected (Rule: {reason}, tail: {repr(stripped[-60:])})"
+        )
+        return True, reason
 
-    # 5. Long response ending mid-sentence without terminal punctuation
+    # 6. Long response ending mid-sentence without terminal punctuation
     if len(stripped) >= 100:
         lines = stripped.splitlines()
         last_line = lines[-1].strip() if lines else ""
 
-        terminal_chars = (
-            ".",
-            "!",
-            "?",
-            ":",
-            ";",
-            '"',
-            "'",
-            "`",
-            ")",
-            "]",
-            "}",
-            ">",
-            "_",
-            "*",
-            "~",
-            "|",
-            "/",
-            "%",
-        )
-        if not stripped.endswith(terminal_chars):
-            # Check if last line is a markdown header or list item
-            if last_line.startswith(
-                (
-                    "#",
-                    "-",
-                    "*",
-                    ">",
-                    "1.",
-                    "2.",
-                    "3.",
-                    "4.",
-                    "5.",
-                    "6.",
-                    "7.",
-                    "8.",
-                    "9.",
-                )
+        if not stripped.endswith(TERMINAL_CHARS):
+            # Check if last character is a Unicode Emoji or Symbol (Category: So, Sm, Sk)
+            last_char = stripped[-1]
+            cat = unicodedata.category(last_char)
+            if cat in ("So", "Sm", "Sk"):
+                return False, ""
+
+            # Check if last line is a markdown header or any numbered/bullet list item
+            if last_line.startswith(("#", "-", "*", ">")) or re.match(
+                r"^\d+\.", last_line
             ):
                 return False, ""
-            # Ends mid-word or without terminal punctuation
-            return True, "INCOMPLETE_SENTENCE"
+
+            reason = "INCOMPLETE_SENTENCE"
+            logger.info(
+                f"[Truncation Detection] Truncated output detected (Rule: {reason}, tail: {repr(stripped[-60:])})"
+            )
+            return True, reason
 
     return False, ""
