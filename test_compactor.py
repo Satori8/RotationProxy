@@ -823,3 +823,52 @@ def test_history_hardening_config_and_process_payload():
     assert result_enabled["contents"][1]["role"] == "model"
     assert result_enabled["contents"][2]["role"] == "user"
     assert result_enabled["contents"][2]["parts"][0]["text"] == "Please continue."
+
+
+def test_is_response_text_truncated():
+    from proxy_core.helpers import is_response_text_truncated
+
+    # 1. Unclosed code block
+    trunc, reason = is_response_text_truncated(
+        "```python\ndef calculate(x):\n    return x * 2"
+    )
+    assert trunc is True
+    assert reason == "UNCLOSED_CODE_BLOCK"
+
+    # 2. Closed code block is valid
+    trunc, reason = is_response_text_truncated(
+        "```python\ndef calculate(x):\n    return x * 2\n```"
+    )
+    assert trunc is False
+
+    # 3. Trailing syntax / operator
+    trunc, reason = is_response_text_truncated("result = calculate_sum(a, b) +")
+    assert trunc is True
+    assert reason == "TRAILING_CODE_SYNTAX"
+
+    # 4. Trailing keyword
+    trunc, reason = is_response_text_truncated("async def process_queue():\n    return")
+    assert trunc is True
+    assert reason == "TRAILING_KEYWORD"
+
+    # 5. Unbalanced delimiters
+    trunc, reason = is_response_text_truncated("data = initialize_mapping({key: result")
+    assert trunc is True
+    assert reason in ("UNBALANCED_DELIMITERS", "TRAILING_CODE_SYNTAX")
+
+    # 6. Incomplete sentence in long text
+    long_text = "This is a comprehensive overview of the architecture and workflow system describing how components interact and cut off because"
+    trunc, reason = is_response_text_truncated(long_text)
+    assert trunc is True
+    assert reason == "INCOMPLETE_SENTENCE"
+
+    # 7. Complete sentence
+    complete_text = "This is a comprehensive overview of the architecture and workflow system describing how components interact."
+    trunc, reason = is_response_text_truncated(complete_text)
+    assert trunc is False
+
+    # 8. Short answer whitelist
+    assert is_response_text_truncated("Yes")[0] is False
+    assert is_response_text_truncated("42")[0] is False
+    assert is_response_text_truncated("true")[0] is False
+    assert is_response_text_truncated("Done.")[0] is False
