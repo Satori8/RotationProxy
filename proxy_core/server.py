@@ -66,6 +66,7 @@ from proxy_core.helpers import (
     add_anomaly_to_state,
     extract_thought_signatures_from_chunk,
     build_continuation_payload,
+    is_response_text_truncated,
 )
 
 import sys
@@ -1919,12 +1920,16 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                         "PROHIBITED_CONTENT",
                                     )
                                 )
+                                is_truncated, truncation_reason = (
+                                    is_response_text_truncated(resp_text_clean)
+                                )
                                 has_anomaly = (
                                     (
                                         "MAX_TOKENS" in finish_reasons
                                         or "LENGTH" in finish_reasons
                                     )
                                     or (has_thoughts and not resp_text_clean)
+                                    or is_truncated
                                     or (
                                         not resp_text_clean
                                         and not has_thoughts
@@ -1949,9 +1954,13 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                             or "LENGTH" in finish_reasons
                                         )
                                         else (
-                                            "THINKING_ONLY"
-                                            if has_thoughts
-                                            else "EMPTY_RESPONSE"
+                                            truncation_reason
+                                            if is_truncated
+                                            else (
+                                                "THINKING_ONLY"
+                                                if has_thoughts
+                                                else "EMPTY_RESPONSE"
+                                            )
                                         )
                                     )
                                     auto_cont_msg = (

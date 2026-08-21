@@ -220,7 +220,9 @@ def extract_thought_signatures_from_chunk(chunk_str: str, provider: str) -> list
                     parts = content.get("parts", [])
                     for p in parts:
                         if isinstance(p, dict):
-                            sig = p.get("thoughtSignature") or p.get("thought_signature")
+                            sig = p.get("thoughtSignature") or p.get(
+                                "thought_signature"
+                            )
                             if sig and isinstance(sig, str) and sig.strip():
                                 if sig.strip() not in signatures:
                                     signatures.append(sig.strip())
@@ -228,7 +230,9 @@ def extract_thought_signatures_from_chunk(chunk_str: str, provider: str) -> list
                 choices = data.get("choices", [])
                 for choice in choices:
                     delta = choice.get("delta") or choice.get("message") or {}
-                    sig = delta.get("thoughtSignature") or delta.get("thought_signature")
+                    sig = delta.get("thoughtSignature") or delta.get(
+                        "thought_signature"
+                    )
                     if sig and isinstance(sig, str) and sig.strip():
                         if sig.strip() not in signatures:
                             signatures.append(sig.strip())
@@ -872,3 +876,148 @@ def add_anomaly_to_state(model: str, msg: str):
             state.RECENT_ANOMALIES.pop(0)
     except Exception as e:
         logger.error(f"Failed to add anomaly to state: {e}")
+
+
+def is_response_text_truncated(text: str) -> tuple[bool, str]:
+    """
+    Detects if generated response text was cut off / truncated mid-stream,
+    even if the upstream API reported finishReason: "STOP".
+
+    Returns (is_truncated: bool, reason: str).
+    """
+    if not text or not isinstance(text, str):
+        return False, ""
+
+    stripped = text.rstrip()
+    if len(stripped) < 20:
+        # Too short to reliably determine truncation (e.g. "Yes", "42", "true", "Done.")
+        return False, ""
+
+    # 1. Unclosed Markdown code blocks (odd number of triple backticks)
+    if stripped.count("```") % 2 == 1:
+        return True, "UNCLOSED_CODE_BLOCK"
+
+    # 2. Trailing syntax / operators / open brackets
+    trailing_operators = (
+        ",",
+        "=",
+        "+",
+        "-",
+        "*",
+        "/",
+        "\\",
+        "->",
+        "=>",
+        "&&",
+        "||",
+        "&",
+        "|",
+        "^",
+        "%",
+        "==",
+        "!=",
+        "<=",
+        ">=",
+    )
+    if stripped.endswith(trailing_operators) or stripped.endswith(("(", "[", "{")):
+        return True, "TRAILING_CODE_SYNTAX"
+
+    # 3. Trailing unfinished language keywords
+    keywords = {
+        "def",
+        "class",
+        "import",
+        "from",
+        "return",
+        "function",
+        "const",
+        "let",
+        "var",
+        "if",
+        "elif",
+        "else",
+        "async",
+        "await",
+        "for",
+        "while",
+        "try",
+        "except",
+        "finally",
+        "with",
+        "switch",
+        "case",
+        "public",
+        "private",
+        "protected",
+        "interface",
+        "type",
+        "struct",
+        "enum",
+        "fn",
+        "impl",
+        "trait",
+        "val",
+        "package",
+        "namespace",
+    }
+    words = stripped.split()
+    if words and words[-1].lower() in keywords:
+        return True, "TRAILING_KEYWORD"
+
+    # 4. Unbalanced code delimiters (open > closed)
+    if (
+        stripped.count("(") > stripped.count(")")
+        or stripped.count("[") > stripped.count("]")
+        or stripped.count("{") > stripped.count("}")
+    ):
+        return True, "UNBALANCED_DELIMITERS"
+
+    # 5. Long response ending mid-sentence without terminal punctuation
+    if len(stripped) >= 100:
+        lines = stripped.splitlines()
+        last_line = lines[-1].strip() if lines else ""
+
+        terminal_chars = (
+            ".",
+            "!",
+            "?",
+            ":",
+            ";",
+            '"',
+            "'",
+            "`",
+            ")",
+            "]",
+            "}",
+            ">",
+            "_",
+            "*",
+            "~",
+            "|",
+            "/",
+            "%",
+        )
+        if not stripped.endswith(terminal_chars):
+            # Check if last line is a markdown header or list item
+            if last_line.startswith(
+                (
+                    "#",
+                    "-",
+                    "*",
+                    ">",
+                    "1.",
+                    "2.",
+                    "3.",
+                    "4.",
+                    "5.",
+                    "6.",
+                    "7.",
+                    "8.",
+                    "9.",
+                )
+            ):
+                return False, ""
+            # Ends mid-word or without terminal punctuation
+            return True, "INCOMPLETE_SENTENCE"
+
+    return False, ""
