@@ -299,6 +299,18 @@ class ProxyGUI(ctk.CTk):
         )
         self.auto_continue_checkbox.pack(anchor="w", padx=10, pady=(3, 1))
 
+        self.history_hardening_var = ctk.BooleanVar(
+            value=config.get("history_hardening", True)
+        )
+        self.history_hardening_checkbox = ctk.CTkCheckBox(
+            self.left_panel,
+            text="History Hardening",
+            variable=self.history_hardening_var,
+            command=self.on_history_hardening_toggle,
+            font=ctk.CTkFont(size=10, weight="bold"),
+        )
+        self.history_hardening_checkbox.pack(anchor="w", padx=10, pady=(3, 3))
+
         self.max_auto_continue_frame = ctk.CTkFrame(
             self.left_panel, fg_color="transparent"
         )
@@ -836,6 +848,14 @@ class ProxyGUI(ctk.CTk):
         cfg["auto_continue"] = self.auto_continue_var.get()
         save_rotation_config(cfg)
         logger.info(f"[GUI] Auto-Continue set to {cfg['auto_continue']}")
+
+    def on_history_hardening_toggle(self):
+        config = load_rotation_config()
+        val = self.history_hardening_var.get()
+        config["history_hardening"] = val
+        save_rotation_config(config)
+        logger.info(f"History Hardening set to: {val}")
+        log_queue.put(f"[GUI] History Hardening set to: {val}")
 
     def on_max_auto_continues_change(self, val):
         try:
@@ -2545,6 +2565,17 @@ class ProxyGUI(ctk.CTk):
         )
         self.cb_strip_thoughts.pack(anchor="w", pady=5)
 
+        self.var_history_hardening = tk.BooleanVar(
+            value=config.get("history_hardening", True)
+        )
+        self.cb_history_hardening = ctk.CTkCheckBox(
+            cb_frame,
+            text="Google History Hardening (repair roles/signatures)",
+            variable=self.var_history_hardening,
+            font=ctk.CTkFont(size=11),
+        )
+        self.cb_history_hardening.pack(anchor="w", pady=5)
+
         # Save settings callback
         def save_settings():
             try:
@@ -2560,6 +2591,9 @@ class ProxyGUI(ctk.CTk):
                 cfg["compactor_inject_guardrails"] = self.var_inject_guardrails.get()
                 cfg["compactor_enable_headroom"] = self.var_enable_headroom.get()
                 cfg["compactor_strip_thoughts"] = self.var_strip_thoughts.get()
+                cfg["history_hardening"] = self.var_history_hardening.get()
+                if hasattr(self, "history_hardening_var"):
+                    self.history_hardening_var.set(self.var_history_hardening.get())
                 save_rotation_config(cfg)
                 logger.info("[GUI] Compactor settings saved successfully.")
                 log_queue.put("[GUI] Compactor settings saved successfully.")

@@ -1763,8 +1763,9 @@ def process_request_payload(payload_dict, config=None):
         payload_dict = strip_historical_thoughts_from_contents(payload_dict)
 
     # Google historyHardening pipeline: coalesce roles, repair orphaned tool pairs,
-    # and enforce start/end/signature invariants unconditionally for Gemini API stability.
-    payload_dict = harden_gemini_history(payload_dict)
+    # and enforce start/end/signature invariants for Gemini API stability.
+    if config.get("history_hardening", True):
+        payload_dict = harden_gemini_history(payload_dict)
     payload_dict = normalize_thinking_config(payload_dict)
     payload_dict = normalize_gemini_thinking_temperature(payload_dict)
 

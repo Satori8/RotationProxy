@@ -88,6 +88,10 @@ def load_rotation_config() -> dict:
                 config["max_auto_continues"] = 2
                 needs_upgrade = True
 
+            if "history_hardening" not in config:
+                config["history_hardening"] = True
+                needs_upgrade = True
+
             # VPN Config Upgrade
             if "vpn_switching_mode" not in config:
                 config["vpn_switching_mode"] = "disabled"
@@ -134,6 +138,7 @@ def load_rotation_config() -> dict:
         "force_model": {},
         "save_chat_logs": False,
         "filter_context": True,
+        "history_hardening": True,
         "auto_continue": True,
         "max_auto_continues": 2,
         "vpn_switching_mode": "disabled",

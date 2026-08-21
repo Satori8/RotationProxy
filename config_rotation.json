@@ -203,6 +203,7 @@
   "compactor_inject_guardrails": false,
   "compactor_enable_headroom": false,
   "compactor_strip_thoughts": false,
+  "history_hardening": true,
   "system_vpn_active": false,
   "system_vpn_index": 6,
   "sse_keepalive": true,

@@ -789,3 +789,37 @@ def test_harden_gemini_history_synthetic_signature_and_tool_repair():
     assert fr_part is not None
     assert fr_part["functionResponse"]["id"] == "c99"
     assert "error" in fr_part["functionResponse"]["response"]
+
+
+def test_history_hardening_config_and_process_payload():
+    from proxy_core.compactor import process_request_payload
+    from proxy_core.config import load_rotation_config
+
+    cfg = load_rotation_config()
+    assert "history_hardening" in cfg
+    assert cfg["history_hardening"] is True
+
+    # When history_hardening is False, adjacent same-role turns and trailing model turn remain untouched
+    raw_payload = {
+        "contents": [
+            {"role": "user", "parts": [{"text": "Hello 1"}]},
+            {"role": "user", "parts": [{"text": "Hello 2"}]},
+            {"role": "model", "parts": [{"text": "Answer 1"}]},
+        ]
+    }
+    result_disabled = process_request_payload(
+        raw_payload, config={"history_hardening": False}
+    )
+    assert len(result_disabled["contents"]) == 3
+    assert result_disabled["contents"][-1]["role"] == "model"
+
+    # When history_hardening is True (or default), payload is hardened (coalesced & sentinel added)
+    result_enabled = process_request_payload(
+        raw_payload, config={"history_hardening": True}
+    )
+    assert len(result_enabled["contents"]) == 3
+    assert result_enabled["contents"][0]["role"] == "user"
+    assert len(result_enabled["contents"][0]["parts"]) == 2
+    assert result_enabled["contents"][1]["role"] == "model"
+    assert result_enabled["contents"][2]["role"] == "user"
+    assert result_enabled["contents"][2]["parts"][0]["text"] == "Please continue."
