@@ -1311,22 +1311,39 @@ def is_response_text_truncated(text: str) -> tuple[bool, str]:
             return True, reason
 
     # 5. Unbalanced code delimiters (open > closed)
-    open_parens = stripped.count("(") - stripped.count(")")
-    open_brackets = stripped.count("[") - stripped.count("]")
-    open_braces = stripped.count("{") - stripped.count("}")
-
-    # Exclude single unmatched paren/bracket if response ends with clean punctuation (smileys/regex)
-    is_cleanly_punctuated = stripped.endswith((".", "!", "?", "\n", "```"))
-    if (
-        (open_parens > 1 or (open_parens > 0 and not is_cleanly_punctuated))
-        or (open_brackets > 1 or (open_brackets > 0 and not is_cleanly_punctuated))
-        or (open_braces > 0)
-    ):
-        reason = "UNBALANCED_DELIMITERS"
-        logger.info(
-            f"[Truncation Detection] Truncated output detected (Rule: {reason}, tail: {repr(stripped[-60:])})"
+    is_cleanly_punctuated = stripped.endswith(
+        (
+            ".",
+            "!",
+            "?",
+            "\n",
+            "```",
+            "…",
+            "»",
+            "”",
+            "’",
+            "„",
+            "。",
+            "！",
+            "？",
+            "」",
+            "』",
+            "】",
         )
-        return True, reason
+    )
+    if not is_cleanly_punctuated:
+        blocks = stripped.split("\n\n")
+        tail_section = blocks[-1] if len(blocks) == 1 else "\n\n".join(blocks[-2:])
+        open_parens = tail_section.count("(") - tail_section.count(")")
+        open_brackets = tail_section.count("[") - tail_section.count("]")
+        open_braces = tail_section.count("{") - tail_section.count("}")
+
+        if open_parens > 0 or open_brackets > 0 or open_braces > 0:
+            reason = "UNBALANCED_DELIMITERS"
+            logger.info(
+                f"[Truncation Detection] Truncated output detected (Rule: {reason}, tail: {repr(stripped[-60:])})"
+            )
+            return True, reason
 
     # 6. Long response ending mid-sentence without terminal punctuation
     if len(stripped) >= 60:

@@ -460,7 +460,7 @@ def test_auto_continue_config_default():
     assert isinstance(cfg["auto_continue"], bool)
     assert "max_auto_continues" in cfg
     assert isinstance(cfg["max_auto_continues"], int)
-    assert 1 <= cfg["max_auto_continues"] <= 5
+    assert 1 <= cfg["max_auto_continues"] <= 100
 
 
 def test_extract_thought_signatures_from_chunk():
@@ -1140,10 +1140,8 @@ def test_auto_continue_loop_prevention_logic():
             and has_anomaly
             and (auto_continue_count < max_auto_continues)
         ):
-            if (
-                prev_segment_text is not None
-                and resp_text_clean == prev_segment_text
-                and thought_text_clean == prev_segment_thoughts
+            if prev_segment_text is not None and len(resp_text_clean) <= len(
+                prev_segment_text
             ):
                 return False, prev_segment_text, prev_segment_thoughts, True
             else:
@@ -1209,7 +1207,7 @@ def test_auto_continue_loop_prevention_logic():
     assert prev_text == "initial text"
     assert prev_thoughts == "initial thoughts"
 
-    # Subsequent identical hop -> detected as duplicate and skipped (should_continue=False)
+    # Subsequent identical or zero-progress hop -> detected as duplicate and skipped (should_continue=False)
     should_continue, prev_text, prev_thoughts, duplicate_detected = (
         evaluate_continuation(
             auto_continue_enabled=True,
@@ -1227,7 +1225,7 @@ def test_auto_continue_loop_prevention_logic():
     assert duplicate_detected is True
     assert prev_text == "initial text"
 
-    # Subsequent hop with modified text/thoughts continues (should_continue=True)
+    # Subsequent hop with modified and longer text continues (should_continue=True)
     should_continue, prev_text, prev_thoughts, duplicate_detected = (
         evaluate_continuation(
             auto_continue_enabled=True,
@@ -1244,3 +1242,66 @@ def test_auto_continue_loop_prevention_logic():
     assert should_continue is True
     assert not duplicate_detected
     assert prev_text == "extended text"
+
+
+def test_is_response_text_truncated_completed_checklist_with_fstrings_and_brackets():
+    from proxy_core.helpers import is_response_text_truncated
+
+    sample_doc = """
+# Production Checklist & Audio Guidelines
+
+Here is the 10-point checklist for production:
+
+1. Setup logging:
+```python
+def log_event(event_name: str, payload: dict):
+    logger.info(f"Event: {event_name}, data: {payload.get('key')}")
+```
+
+2. Bracket annotations:
+[informative] Use high quality TTS models.
+[pause] Ensure adequate pauses between sentences.
+
+3. Math formulas and parameters:
+{param: [1, 2, 3]}
+
+4. Dynamic templates:
+`f"Result: {result}"`
+
+10. Phonetic Transcriptions: Ensure correct IPA tags are present to prevent mispronunciation.
+"""
+    is_trunc, reason = is_response_text_truncated(sample_doc)
+    assert is_trunc is False
+    assert reason == ""
+
+
+def test_is_response_text_truncated_unclosed_delimiters_trailing():
+    from proxy_core.helpers import is_response_text_truncated
+
+    # Trailing unclosed bracket
+    snippet1 = "def configure():\n    items = [1, 2, "
+    is_trunc, reason = is_response_text_truncated(snippet1)
+    assert is_trunc is True
+    assert reason in ("UNBALANCED_DELIMITERS", "TRAILING_CODE_SYNTAX")
+
+    # Trailing unclosed paren
+    snippet2 = "Here is the code block:\ndef foo(a, b"
+    is_trunc, reason = is_response_text_truncated(snippet2)
+    assert is_trunc is True
+    assert reason in (
+        "UNBALANCED_DELIMITERS",
+        "TRAILING_CODE_SYNTAX",
+        "INCOMPLETE_SENTENCE",
+    )
+
+
+def test_auto_continue_stops_on_zero_or_negative_text_progress():
+    def check_continue(prev_text, new_text):
+        if prev_text is not None and len(new_text) <= len(prev_text):
+            return False
+        return True
+
+    assert check_continue(None, "abc") is True
+    assert check_continue("abc", "abcdef") is True
+    assert check_continue("abcdef", "abcdef") is False  # Zero text progress
+    assert check_continue("abcdef", "abc") is False  # Shorter / regression

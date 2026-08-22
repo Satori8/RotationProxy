@@ -1,18 +1,9 @@
 {
-  "last_fallback_switch_time": 1787311642.4377944,
+  "last_fallback_switch_time": 1787336038.9562974,
   "primary_model": "gemini-3.6-flash",
   "fallback_model": "gemini-3-flash-preview",
   "model_cooldowns": {},
-  "consecutive_model_failures": {
-    "ollama/minimax-m3": 0,
-    "gemini-3.6-flash": 0,
-    "mistral/zai-glm-5-2": 0,
-    "gemini-3.5-flash": 0,
-    "opencode_zen/deepseek-v4-flash-free": 0,
-    "zai-glm-5-2": 0,
-    "google/gemini-3.7-flash": 0,
-    "mistral/mistral-large-latest": 0
-  },
+  "consecutive_model_failures": {},
   "thinking_models": [
     "gemini-3.6-flash",
     "google/gemini-3.7-flash",
@@ -178,8 +169,8 @@
   },
   "use_kaggle": false,
   "force_model": {
-    "all": "google/gemini-3.7-flash",
-    "gemini-3.6-flash": "google/gemini-3.7-flash"
+    "all": "auto",
+    "gemini-3.6-flash": "auto"
   },
   "save_chat_logs": false,
   "vpn_switching_mode": "every_request",
@@ -206,9 +197,9 @@
   "compactor_strip_thoughts": false,
   "history_hardening": true,
   "system_vpn_active": false,
-  "system_vpn_index": 6,
+  "system_vpn_index": 1,
   "sse_keepalive": true,
-  "auto_continue": false,
-  "max_auto_continues": 5,
+  "auto_continue": true,
+  "max_auto_continues": 50,
   "truncation_detection": true
 }

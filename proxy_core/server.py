@@ -1954,14 +1954,12 @@ async def _transparent_proxy_attempt(request: Request, path: str):
                                     and has_anomaly
                                     and (auto_continue_count < max_auto_continues)
                                 ):
-                                    if (
-                                        prev_segment_text is not None
-                                        and resp_text_clean == prev_segment_text
-                                        and thought_text_clean == prev_segment_thoughts
-                                    ):
+                                    if prev_segment_text is not None and len(
+                                        resp_text_clean
+                                    ) <= len(prev_segment_text):
                                         logger.warning(
                                             f"[{candidate_model}] [vpn#{actual_vpn_index}] [Auto-Continue] "
-                                            "Skipping duplicate continuation attempt (identical text/thoughts produced in continuation hop)."
+                                            f"Stopping continuation: model produced no new text tokens in hop (text length: {len(resp_text_clean)} chars, previous: {len(prev_segment_text)} chars)."
                                         )
                                         should_continue = False
                                     else:
