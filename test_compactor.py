@@ -888,7 +888,7 @@ def test_is_response_text_truncated():
         "Key architecture principles to remember:\n"
         "1. First rule\n"
         "2. Second rule\n"
-        "10. Subagent state tracking and session persistence"
+        "10. Session persistence"
     )
     assert is_response_text_truncated(numbered_list_text)[0] is False
 
@@ -1305,3 +1305,47 @@ def test_auto_continue_stops_on_zero_or_negative_text_progress():
     assert check_continue("abc", "abcdef") is True
     assert check_continue("abcdef", "abcdef") is False  # Zero text progress
     assert check_continue("abcdef", "abc") is False  # Shorter / regression
+
+
+def test_is_response_text_truncated_bullet_list_description():
+    from proxy_core.helpers import is_response_text_truncated
+
+    # Truncated bullet item with multi-word description cut off
+    snippet_truncated = (
+        "### Key Features\n"
+        "- AST Parsing: Extract syntax trees\n"
+        "- Syntax-Highlighted Editor: Colors delivery"
+    )
+    is_trunc, reason = is_response_text_truncated(snippet_truncated)
+    assert is_trunc is True
+    assert reason == "INCOMPLETE_SENTENCE"
+
+    # Completed bullet item with period
+    snippet_complete = (
+        "### Key Features\n"
+        "- AST Parsing: Extract syntax trees.\n"
+        "- Syntax-Highlighted Editor: Colors delivery tags in real-time."
+    )
+    is_trunc, reason = is_response_text_truncated(snippet_complete)
+    assert is_trunc is False
+    assert reason == ""
+
+    # Atomic key-value list item (e.g. platform info)
+    snippet_kv = (
+        "Environment configuration details for the current host system:\n"
+        "- Python: 3.11\n"
+        "- Platform: win32"
+    )
+    is_trunc, reason = is_response_text_truncated(snippet_kv)
+    assert is_trunc is False
+    assert reason == ""
+
+    # Plain multi-word item cut off without terminal punctuation
+    snippet_plain_long = (
+        "Core Capabilities:\n"
+        "- Fast search indexing\n"
+        "- Synthesizes large blocks close to the context window limit"
+    )
+    is_trunc, reason = is_response_text_truncated(snippet_plain_long)
+    assert is_trunc is True
+    assert reason == "INCOMPLETE_SENTENCE"

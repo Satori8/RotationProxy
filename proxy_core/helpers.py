@@ -1357,13 +1357,9 @@ def is_response_text_truncated(text: str) -> tuple[bool, str]:
             if cat in ("So", "Sm", "Sk"):
                 return False, ""
 
-            # Check if last line is a markdown header or bullet/numbered list item
-            is_list_or_header = last_line.startswith(("#", "-", "*", ">")) or bool(
-                re.match(r"^\d+\.", last_line)
-            )
-            if is_list_or_header:
-                # Strip list/header prefix (e.g. "1. ", "## ", "- ") to get clean content
-                content = re.sub(r"^(#+|-|\*|>|\d+\.)\s*", "", last_line).strip()
+            # Check if last line is a markdown header, checklist, or bullet/numbered list item
+            if last_line.startswith("#"):
+                content = re.sub(r"^#+\s*", "", last_line).strip()
                 last_word = (
                     content.split()[-1].lower().strip(" \t\r\n`'\"")
                     if content.split()
@@ -1373,12 +1369,64 @@ def is_response_text_truncated(text: str) -> tuple[bool, str]:
                     last_word in TRUNCATED_KEYWORDS
                     or last_word in TRAILING_CONTINUATION_WORDS
                 )
-
-                # A list item / header without terminal punctuation is ONLY exempt
-                # if it is a concise title/label (<= 50 chars) and does NOT end with
-                # an incomplete continuation word or keyword.
-                if len(content) <= 50 and not is_continuation:
+                if len(content) <= 80 and not is_continuation:
                     return False, ""
+
+            elif bool(re.match(r"^(\*|-)\s*\[[ xX]\]", last_line)):
+                content = re.sub(r"^(\*|-)\s*\[[ xX]\]\s*", "", last_line).strip()
+                last_word = (
+                    content.split()[-1].lower().strip(" \t\r\n`'\"")
+                    if content.split()
+                    else ""
+                )
+                is_continuation = (
+                    last_word in TRUNCATED_KEYWORDS
+                    or last_word in TRAILING_CONTINUATION_WORDS
+                )
+                if len(content) <= 60 and not is_continuation:
+                    return False, ""
+
+            elif bool(re.match(r"^(-|\*|>|\d+\.)\s*", last_line)):
+                content = re.sub(r"^(-|\*|>|\d+\.)\s*", "", last_line).strip()
+                last_word = (
+                    content.split()[-1].lower().strip(" \t\r\n`'\"")
+                    if content.split()
+                    else ""
+                )
+                is_continuation = (
+                    last_word in TRUNCATED_KEYWORDS
+                    or last_word in TRAILING_CONTINUATION_WORDS
+                )
+                if is_continuation:
+                    reason = "INCOMPLETE_SENTENCE"
+                    logger.info(
+                        f"[Truncation Detection] Truncated output detected (Rule: {reason}, tail: {repr(stripped[-60:])})"
+                    )
+                    return True, reason
+
+                if ":" in content:
+                    _, _, desc = content.partition(":")
+                    desc_clean = desc.strip()
+                    desc_words = desc_clean.split()
+                    if len(desc_words) >= 2 or len(desc_clean) >= 15:
+                        reason = "INCOMPLETE_SENTENCE"
+                        logger.info(
+                            f"[Truncation Detection] Truncated output detected (Rule: {reason}, tail: {repr(stripped[-60:])})"
+                        )
+                        return True, reason
+                    elif len(desc_words) <= 1 and len(desc_clean) < 15:
+                        # Atomic key-value (e.g. "- Platform: win32", "- Port: 8080")
+                        return False, ""
+                else:
+                    # Plain list item without colon
+                    if len(content.split()) <= 3 and len(content) <= 25:
+                        return False, ""
+                    else:
+                        reason = "INCOMPLETE_SENTENCE"
+                        logger.info(
+                            f"[Truncation Detection] Truncated output detected (Rule: {reason}, tail: {repr(stripped[-60:])})"
+                        )
+                        return True, reason
 
             reason = "INCOMPLETE_SENTENCE"
             logger.info(
