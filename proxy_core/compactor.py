@@ -1541,32 +1541,6 @@ def normalize_thinking_config(data):
     return data
 
 
-def normalize_gemini_thinking_temperature(data):
-    """
-    Ensure temperature is at least 0.7 for Gemini thinking models to prevent
-    'Thinking Collapse' (where low temp causes the model to output STOP immediately after thoughts).
-    """
-    # Gemini native format
-    if "generationConfig" in data and isinstance(data["generationConfig"], dict):
-        gc = data["generationConfig"]
-        if "temperature" in gc and gc["temperature"] is not None:
-            if float(gc["temperature"]) < 0.7:
-                gc["temperature"] = 0.7
-                logger.debug(
-                    "[Compactor] Clamped generationConfig.temperature to 0.7 for Gemini thinking stability"
-                )
-
-    # OpenAI format
-    if "temperature" in data and data["temperature"] is not None:
-        if float(data["temperature"]) < 0.7:
-            data["temperature"] = 0.7
-            logger.debug(
-                "[Compactor] Clamped payload.temperature to 0.7 for Gemini thinking stability"
-            )
-
-    return data
-
-
 def process_request_payload(payload_dict, config=None):
     """Main entry point for GeminiProxy context compaction."""
     if config is None:
@@ -2054,6 +2028,5 @@ def process_request_payload(payload_dict, config=None):
     if config.get("history_hardening", True):
         payload_dict = harden_gemini_history(payload_dict)
     payload_dict = normalize_thinking_config(payload_dict)
-    payload_dict = normalize_gemini_thinking_temperature(payload_dict)
 
     return payload_dict

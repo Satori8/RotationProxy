@@ -523,10 +523,6 @@ def translate_payload_to_openai(gemini_payload: dict, target_model: str) -> dict
                 new_payload["frequency_penalty"] = 0.5
             if "presence_penalty" not in new_payload:
                 new_payload["presence_penalty"] = 0.5
-            # If temperature is too low, raise it slightly to break loops
-            temp = new_payload.get("temperature")
-            if temp is not None and float(temp) < 0.3:
-                new_payload["temperature"] = 0.3
 
         return new_payload
 
@@ -695,9 +691,6 @@ def translate_payload_to_openai(gemini_payload: dict, target_model: str) -> dict
             openai_payload["frequency_penalty"] = 0.5
         if "presence_penalty" not in openai_payload:
             openai_payload["presence_penalty"] = 0.5
-        temp = openai_payload.get("temperature")
-        if temp is not None and float(temp) < 0.3:
-            openai_payload["temperature"] = 0.3
 
     return openai_payload
 
