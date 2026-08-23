@@ -1,5 +1,5 @@
 {
-  "last_fallback_switch_time": 1787448290.8646894,
+  "last_fallback_switch_time": 1787484301.2943835,
   "primary_model": "gemini-3.6-flash",
   "fallback_model": "gemini-3-flash-preview",
   "model_cooldowns": {},

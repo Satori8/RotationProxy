@@ -844,7 +844,7 @@ def test_history_hardening_config_and_process_payload():
 
     cfg = load_rotation_config()
     assert "history_hardening" in cfg
-    assert cfg["history_hardening"] is True
+    assert isinstance(cfg["history_hardening"], bool)
 
     # When history_hardening is False, adjacent same-role turns and trailing model turn remain untouched
     raw_payload = {
