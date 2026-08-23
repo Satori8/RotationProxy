@@ -1149,7 +1149,8 @@ def harden_gemini_history(data: dict) -> dict:
 
     # Pass 1: Initial coalesce
     work_contents = _coalesce_turns(contents)
-    if len(work_contents) < len(contents):
+    initial_coalesced_count = len(contents) - len(work_contents)
+    if initial_coalesced_count > 0:
         actions.append(
             f"coalesced adjacent same-role turns ({len(contents)} -> {len(work_contents)})"
         )
@@ -1378,7 +1379,8 @@ def harden_gemini_history(data: dict) -> dict:
             )
 
     final_contents = _coalesce_turns(constrained)
-    if len(final_contents) < len(constrained):
+    final_coalesced_count = len(constrained) - len(final_contents)
+    if final_coalesced_count > 0:
         actions.append(
             f"coalesced final adjacent turns ({len(constrained)} -> {len(final_contents)})"
         )

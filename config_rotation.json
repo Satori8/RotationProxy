@@ -175,7 +175,7 @@
     "all": "auto",
     "gemini-3.6-flash": "auto"
   },
-  "save_chat_logs": false,
+  "save_chat_logs": true,
   "vpn_switching_mode": "every_request",
   "vpn_static_channel": 0,
   "vpn_errors_threshold": 3,

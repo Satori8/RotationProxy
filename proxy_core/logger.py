@@ -22,6 +22,9 @@ class ColoredFormatter(logging.Formatter):
     YELLOW = "\x1b[33m"
     RED = "\x1b[31m"
     BOLD_RED = "\x1b[31;1m"
+    MAGENTA = "\x1b[35m"
+    CYAN = "\x1b[36m"
+    BLUE = "\x1b[34m"
     RESET = "\x1b[0m"
 
     COLORS = {
@@ -38,7 +41,14 @@ class ColoredFormatter(logging.Formatter):
         rec = copy.copy(record)
         if getattr(rec, "no_level", False):
             return f"{self.formatTime(rec, self.datefmt)} {rec.getMessage()}"
+        
+        msg = rec.getMessage()
         color = self.COLORS.get(rec.levelno, self.RESET)
+        
+        # Distinct colors for special interventions
+        if "[History Hardening]" in msg or "[Auto-Continue]" in msg or "[Truncation" in msg or "[Sanitizer]" in msg:
+            color = self.MAGENTA # Bright magenta/purple for context proxy interventions
+        
         rec.levelname = f"{color}{rec.levelname}{self.RESET}"
         rec.msg = f"{color}{rec.msg}{self.RESET}"
         return super().format(rec)
