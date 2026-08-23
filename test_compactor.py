@@ -791,6 +791,53 @@ def test_harden_gemini_history_synthetic_signature_and_tool_repair():
     assert "error" in fr_part["functionResponse"]["response"]
 
 
+def test_harden_gemini_history_logging(caplog):
+    import logging
+    from proxy_core.compactor import harden_gemini_history
+
+    # 1. Test repairing unpaired tool calls & missing signatures
+    caplog.clear()
+    payload = {
+        "contents": [
+            {"role": "user", "parts": [{"text": "Call tool"}]},
+            {
+                "role": "model",
+                "parts": [{"functionCall": {"name": "calc", "id": "c99", "args": {}}}],
+            },
+            {"role": "user", "parts": [{"text": "Next"}]},
+        ]
+    }
+    with caplog.at_level(logging.INFO):
+        harden_gemini_history(payload)
+
+    assert "[History Hardening] Applied" in caplog.text
+    assert (
+        "injected synthetic thoughtSignature on functionCall 'calc' in model turn #1"
+        in caplog.text
+    )
+    assert (
+        "synthesized user functionResponse for unpaired functionCall 'calc' (id: c99)"
+        in caplog.text
+    )
+
+    # 2. Test role boundary constraints logging (starts and ends with model)
+    caplog.clear()
+    payload_model_only = {
+        "contents": [
+            {"role": "model", "parts": [{"text": "Only model message"}]},
+        ]
+    }
+    with caplog.at_level(logging.INFO):
+        harden_gemini_history(payload_model_only)
+
+    assert "[History Hardening] Applied" in caplog.text
+    assert "prepended user start sentinel (history started with model)" in caplog.text
+    assert (
+        "appended user 'Please continue.' turn (history ended with model)"
+        in caplog.text
+    )
+
+
 def test_history_hardening_config_and_process_payload():
     from proxy_core.compactor import process_request_payload
     from proxy_core.config import load_rotation_config

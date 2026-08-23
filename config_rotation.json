@@ -1,9 +1,12 @@
 {
-  "last_fallback_switch_time": 1787336038.9562974,
+  "last_fallback_switch_time": 1787448290.8646894,
   "primary_model": "gemini-3.6-flash",
   "fallback_model": "gemini-3-flash-preview",
   "model_cooldowns": {},
-  "consecutive_model_failures": {},
+  "consecutive_model_failures": {
+    "gemini-3.6-flash": 0,
+    "gemini-3.7-flash": 0
+  },
   "thinking_models": [
     "gemini-3.6-flash",
     "google/gemini-3.7-flash",

@@ -1034,16 +1034,28 @@ def clean_auto_continuation_turns(data: dict) -> dict:
     Supports both Gemini `contents` and OpenAI `messages` schemas, handling multi-hop chains.
     """
     if "contents" in data and isinstance(data["contents"], list):
+        orig_len = len(data["contents"])
         prev_len = -1
         while len(data["contents"]) != prev_len:
             prev_len = len(data["contents"])
             data["contents"] = clean_gemini_contents_continuations(data["contents"])
+        new_len = len(data["contents"])
+        if orig_len > new_len:
+            logger.info(
+                f"[Auto-Continue] Cleaned {orig_len - new_len} intermediate continuation turn(s) from history"
+            )
 
     if "messages" in data and isinstance(data["messages"], list):
+        orig_len = len(data["messages"])
         prev_len = -1
         while len(data["messages"]) != prev_len:
             prev_len = len(data["messages"])
             data["messages"] = clean_openai_messages_continuations(data["messages"])
+        new_len = len(data["messages"])
+        if orig_len > new_len:
+            logger.info(
+                f"[Auto-Continue] Cleaned {orig_len - new_len} intermediate continuation turn(s) from history"
+            )
 
     return data
 
@@ -1073,6 +1085,8 @@ def harden_gemini_history(data: dict) -> dict:
     contents = data["contents"]
     if not contents:
         return data
+
+    actions: list[str] = []
 
     # Helper: coalesce adjacent roles, but PRESERVE tool response boundaries.
     # In Gemini API, a user turn responding to a functionCall (containing functionResponse)
@@ -1135,6 +1149,10 @@ def harden_gemini_history(data: dict) -> dict:
 
     # Pass 1: Initial coalesce
     work_contents = _coalesce_turns(contents)
+    if len(work_contents) < len(contents):
+        actions.append(
+            f"coalesced adjacent same-role turns ({len(contents)} -> {len(work_contents)})"
+        )
     if not work_contents:
         return data
 
@@ -1155,6 +1173,11 @@ def harden_gemini_history(data: dict) -> dict:
                     has_sig = "thoughtSignature" in p or "thought_signature" in p
                     if not found_call and not has_sig:
                         parts[j]["thoughtSignature"] = SYNTHETIC_THOUGHT_SIGNATURE
+                        fc_obj = p.get("functionCall") or p.get("function_call", {})
+                        cname = fc_obj.get("name", "unknown")
+                        actions.append(
+                            f"injected synthetic thoughtSignature on functionCall '{cname}' in model turn #{i}"
+                        )
                     found_call = True
 
             call_parts = [
@@ -1214,6 +1237,9 @@ def harden_gemini_history(data: dict) -> dict:
                         target_user.setdefault("parts", []).append(
                             {"functionResponse": resp_payload}
                         )
+                        actions.append(
+                            f"synthesized user functionResponse for unpaired functionCall '{m['name']}' (id: {m['id'] or 'none'})"
+                        )
         elif role == "user":
             prev_turn = paired_contents[-1] if paired_contents else None
             valid_parts = []
@@ -1265,6 +1291,9 @@ def harden_gemini_history(data: dict) -> dict:
                         "thoughtSignature": SYNTHETIC_THOUGHT_SIGNATURE,
                     }
                     target_model.setdefault("parts", []).append(call_part)
+                    actions.append(
+                        f"synthesized model functionCall for orphaned functionResponse '{fr.get('name')}' (id: {fr.get('id') or 'none'})"
+                    )
 
             turn["parts"] = valid_parts
 
@@ -1297,6 +1326,7 @@ def harden_gemini_history(data: dict) -> dict:
                     if not (isinstance(p, dict) and "functionResponse" in p)
                 ]
                 if responses:
+                    orig_responses = list(responses)
 
                     def _resp_sort_key(r):
                         rid = r["functionResponse"].get("id")
@@ -1306,6 +1336,10 @@ def harden_gemini_history(data: dict) -> dict:
                             return len(call_order)
 
                     responses.sort(key=_resp_sort_key)
+                    if responses != orig_responses:
+                        actions.append(
+                            f"reordered {len(responses)} functionResponse parts in user turn #{idx} to match call order"
+                        )
                     t_curr["parts"] = responses + others
 
     # Pass 4: Enforce start/end constraints
@@ -1321,6 +1355,7 @@ def harden_gemini_history(data: dict) -> dict:
                 "parts": [{"text": DEFAULT_SENTINELS["continuation"]}],
             },
         )
+        actions.append("prepended user start sentinel (history started with model)")
 
     if constrained[-1].get("role") == "model":
         # If the last model turn ended with a functionCall, it is actively waiting
@@ -1338,8 +1373,19 @@ def harden_gemini_history(data: dict) -> dict:
                     "parts": [{"text": "Please continue."}],
                 }
             )
+            actions.append(
+                "appended user 'Please continue.' turn (history ended with model)"
+            )
 
     final_contents = _coalesce_turns(constrained)
+    if len(final_contents) < len(constrained):
+        actions.append(
+            f"coalesced final adjacent turns ({len(constrained)} -> {len(final_contents)})"
+        )
+    if actions:
+        logger.info(
+            f"[History Hardening] Applied {len(actions)} fixes: {'; '.join(actions)}"
+        )
     data["contents"] = final_contents
     return data
 
@@ -1369,7 +1415,7 @@ def split_merged_parts_in_contents(data):
         [{"functionCall": {...}}, {"text": "..."}]
     """
     if "contents" in data and isinstance(data["contents"], list):
-        for msg in data["contents"]:
+        for msg_idx, msg in enumerate(data["contents"]):
             if (
                 not isinstance(msg, dict)
                 or "parts" not in msg
@@ -1385,6 +1431,9 @@ def split_merged_parts_in_contents(data):
                     (k for k in GEMINI_PART_DATA_FIELDS if k in part), None
                 )
                 if data_field and "text" in part:
+                    logger.info(
+                        f"[Sanitizer] Split merged '{data_field}' + 'text' part in Gemini content turn #{msg_idx}"
+                    )
                     # Split into separate parts; keep thought/signature metadata
                     # on the data part (functionCall parts carry thoughtSignature).
                     data_part = {k: v for k, v in part.items() if k != "text"}
