@@ -1743,7 +1743,7 @@ class ProxyGUI(ctk.CTk):
         threading.Thread(target=do_test, daemon=True).start()
 
     def on_add_model_to_rotation(self, model_id, provider=None):
-        """Add a model from scan to the end of the active rotation list and thinking_models list, with provider prefix."""
+        """Add a model from scan to the top of the active rotation list and thinking_models list, with provider prefix."""
         prefixed_model_id = model_id
         if (
             provider
@@ -1752,30 +1752,32 @@ class ProxyGUI(ctk.CTk):
         ):
             prefixed_model_id = f"{provider}/{model_id}"
 
-        if prefixed_model_id not in self.active_rotation_list:
-            self.active_rotation_list.append(prefixed_model_id)
-            self.render_rotation_list()
+        if prefixed_model_id in self.active_rotation_list:
+            self.active_rotation_list.remove(prefixed_model_id)
 
-            # Automatically sync to thinking_models and rotation_lists in config so it is available to force
-            try:
-                config = load_rotation_config()
-                if "rotation_lists" not in config:
-                    config["rotation_lists"] = {}
-                config["rotation_lists"][self.active_domain_key] = list(
-                    self.active_rotation_list
-                )
-                config["thinking_models"] = list(self.active_rotation_list)
-                save_rotation_config(config)
-                self.refresh_model_dropdowns()
-            except Exception as e:
-                logger.warning(f"Failed to auto-add model to rotation config: {e}")
+        self.active_rotation_list.insert(0, prefixed_model_id)
+        self.render_rotation_list()
 
-            logger.info(
-                f"[GUI] Added model '{prefixed_model_id}' to rotation and forced model lists."
+        # Automatically sync to thinking_models and rotation_lists in config so it is available to force
+        try:
+            config = load_rotation_config()
+            if "rotation_lists" not in config:
+                config["rotation_lists"] = {}
+            config["rotation_lists"][self.active_domain_key] = list(
+                self.active_rotation_list
             )
-            log_queue.put(
-                f"[GUI] Added model '{prefixed_model_id}' to rotation and forced model lists."
-            )
+            config["thinking_models"] = list(self.active_rotation_list)
+            save_rotation_config(config)
+            self.refresh_model_dropdowns()
+        except Exception as e:
+            logger.warning(f"Failed to auto-add model to rotation config: {e}")
+
+        logger.info(
+            f"[GUI] Added model '{prefixed_model_id}' to top of the active rotation list and forced model lists."
+        )
+        log_queue.put(
+            f"[GUI] Added model '{prefixed_model_id}' to top of the active rotation list and forced model lists."
+        )
 
     def load_active_rotation_from_disk(self):
         """Load and display the active rotation list from config based on active domain."""
