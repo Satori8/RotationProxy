@@ -18,6 +18,7 @@ from proxy_core.logger import PlainFormatter
 from proxy_core.config import (
     load_rotation_config,
     save_rotation_config,
+    get_vpn_dir,
     USE_KAGGLE,
     SAVE_CHAT_LOGS,
     KAGGLE_BASE_URL,
@@ -89,8 +90,8 @@ class InvalidStreamError(Exception):
 
 
 # Dynamically add vpn_manager directory to path
-vpn_dir = r"D:\Work\Active\server-services\vpn_switcher"
-if vpn_dir not in sys.path:
+vpn_dir = get_vpn_dir()
+if vpn_dir and os.path.exists(vpn_dir) and vpn_dir not in sys.path:
     sys.path.insert(0, vpn_dir)
 
 try:

@@ -1,7 +1,15 @@
 import os
 import tempfile
 import pytest
-from proxy_core.config import load_rotation_config, DEFAULT_KEYS_LOCATION
+from proxy_core.config import (
+    load_rotation_config,
+    DEFAULT_KEYS_LOCATION,
+    DEFAULT_VPN_DIR,
+    DEFAULT_OPENCODE_CONFIG_PATH,
+    get_keys_location,
+    get_vpn_dir,
+    get_opencode_config_path,
+)
 from proxy_core.rotation import (
     resolve_key_file_paths,
     reload_all_keys,
@@ -86,3 +94,75 @@ def test_reload_all_keys_from_temp_dir():
 
     # Restore default/actual keys
     reload_all_keys()
+
+
+def test_get_keys_location(monkeypatch):
+    monkeypatch.delenv("GEMINI_PROXY_KEYS_LOCATION", raising=False)
+    # 1. Config takes precedence
+    assert get_keys_location({"keys_location": "D:/Custom/Keys"}) == "D:/Custom/Keys"
+    # 2. Env takes precedence over default
+    monkeypatch.setenv("GEMINI_PROXY_KEYS_LOCATION", "D:/Env/Keys")
+    assert get_keys_location({}) == "D:/Env/Keys"
+    assert get_keys_location(None) == "D:/Env/Keys"
+    # 3. Default fallback
+    monkeypatch.delenv("GEMINI_PROXY_KEYS_LOCATION", raising=False)
+    assert get_keys_location({}) == DEFAULT_KEYS_LOCATION
+    assert get_keys_location(None) == DEFAULT_KEYS_LOCATION
+
+
+def test_get_vpn_dir(monkeypatch):
+    monkeypatch.delenv("VPN_SWITCHER_DIR", raising=False)
+    # 1. Config takes precedence
+    assert get_vpn_dir({"vpn_switcher_dir": "D:/Custom/VPN"}) == "D:/Custom/VPN"
+    # 2. Env takes precedence over default
+    monkeypatch.setenv("VPN_SWITCHER_DIR", "D:/Env/VPN")
+    assert get_vpn_dir({}) == "D:/Env/VPN"
+    assert get_vpn_dir(None) == "D:/Env/VPN"
+    # 3. Default fallback
+    monkeypatch.delenv("VPN_SWITCHER_DIR", raising=False)
+    assert get_vpn_dir({}) == DEFAULT_VPN_DIR
+    assert get_vpn_dir(None) == DEFAULT_VPN_DIR
+
+
+def test_get_opencode_config_path(monkeypatch):
+    monkeypatch.delenv("OPENCODE_CONFIG_PATH", raising=False)
+    # 1. Config takes precedence
+    assert (
+        get_opencode_config_path({"opencode_config_path": "D:/Custom/opencode.jsonc"})
+        == "D:/Custom/opencode.jsonc"
+    )
+    # 2. Env takes precedence over default
+    monkeypatch.setenv("OPENCODE_CONFIG_PATH", "D:/Env/opencode.jsonc")
+    assert get_opencode_config_path({}) == "D:/Env/opencode.jsonc"
+    assert get_opencode_config_path(None) == "D:/Env/opencode.jsonc"
+    # 3. Default fallback
+    monkeypatch.delenv("OPENCODE_CONFIG_PATH", raising=False)
+    assert get_opencode_config_path({}) == DEFAULT_OPENCODE_CONFIG_PATH
+    assert get_opencode_config_path(None) == DEFAULT_OPENCODE_CONFIG_PATH
+
+
+def test_load_rotation_config_schema_upgrade(monkeypatch):
+    import json
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        fake_config_path = os.path.join(temp_dir, "fake_config_rotation.json")
+        # Write minimal config missing new fields
+        with open(fake_config_path, "w", encoding="utf-8") as f:
+            json.dump({"enable_model_rotation": True}, f)
+
+        monkeypatch.setattr("proxy_core.config.ROTATION_CONFIG_PATH", fake_config_path)
+
+        loaded = load_rotation_config()
+        assert "vpn_switcher_dir" in loaded
+        assert loaded["vpn_switcher_dir"] == DEFAULT_VPN_DIR
+        assert "opencode_config_path" in loaded
+        assert loaded["opencode_config_path"] == DEFAULT_OPENCODE_CONFIG_PATH
+        assert "keys_location" in loaded
+        assert loaded["keys_location"] == DEFAULT_KEYS_LOCATION
+
+        # Verify it was saved back to disk
+        with open(fake_config_path, "r", encoding="utf-8") as f:
+            saved = json.load(f)
+        assert "vpn_switcher_dir" in saved
+        assert "opencode_config_path" in saved
+        assert "keys_location" in saved

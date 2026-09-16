@@ -17,6 +17,10 @@ from proxy_core.config import (
     load_rotation_config,
     save_rotation_config,
     DEFAULT_KEYS_LOCATION,
+    DEFAULT_VPN_DIR,
+    DEFAULT_OPENCODE_CONFIG_PATH,
+    get_vpn_dir,
+    get_opencode_config_path,
     USE_KAGGLE,
     SAVE_CHAT_LOGS,
     KAGGLE_BASE_URL,
@@ -129,8 +133,8 @@ class ProxyGUI(ctk.CTk):
 
         import sys
 
-        vpn_dir = r"D:\Work\Active\server-services\vpn_switcher"
-        if vpn_dir not in sys.path:
+        vpn_dir = get_vpn_dir()
+        if vpn_dir and os.path.exists(vpn_dir) and vpn_dir not in sys.path:
             sys.path.insert(0, vpn_dir)
         try:
             from vpn_manager import WindowsWireGuardManager
@@ -1573,6 +1577,76 @@ class ProxyGUI(ctk.CTk):
             "Путь к папке или файлу с API ключами",
         )
 
+        # VPN Switcher Directory (Column 0)
+        vpn_dir_label = ctk.CTkLabel(
+            settings_frame,
+            text="VPN Switcher Directory:",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        )
+        vpn_dir_label.grid(row=6, column=0, padx=10, pady=(10, 2), sticky="w")
+
+        vpn_dir_frame = ctk.CTkFrame(settings_frame, fg_color="transparent")
+        vpn_dir_frame.grid(row=7, column=0, padx=10, pady=(0, 10), sticky="ew")
+        vpn_dir_frame.grid_columnconfigure(0, weight=1)
+
+        self.vpn_dir_entry = ctk.CTkEntry(vpn_dir_frame)
+        self.vpn_dir_entry.insert(
+            0, str(config.get("vpn_switcher_dir", DEFAULT_VPN_DIR))
+        )
+        self.vpn_dir_entry.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+
+        self.vpn_dir_browse_btn = ctk.CTkButton(
+            vpn_dir_frame,
+            text="Browse",
+            width=60,
+            command=self.on_browse_vpn_dir,
+        )
+        self.vpn_dir_browse_btn.grid(row=0, column=1, sticky="e")
+
+        CTkToolTip(
+            vpn_dir_label,
+            "Path to the WireGuard vpn_switcher folder containing vpn_manager.py and tunnel configs.",
+        )
+        CTkToolTip(
+            self.vpn_dir_entry,
+            "Path to the WireGuard vpn_switcher folder containing vpn_manager.py and tunnel configs.",
+        )
+
+        # OpenCode Config Path (Column 1)
+        opencode_label = ctk.CTkLabel(
+            settings_frame,
+            text="OpenCode Config Path:",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        )
+        opencode_label.grid(row=6, column=1, padx=10, pady=(10, 2), sticky="w")
+
+        opencode_frame = ctk.CTkFrame(settings_frame, fg_color="transparent")
+        opencode_frame.grid(row=7, column=1, padx=10, pady=(0, 10), sticky="ew")
+        opencode_frame.grid_columnconfigure(0, weight=1)
+
+        self.opencode_path_entry = ctk.CTkEntry(opencode_frame)
+        self.opencode_path_entry.insert(
+            0, str(config.get("opencode_config_path", DEFAULT_OPENCODE_CONFIG_PATH))
+        )
+        self.opencode_path_entry.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+
+        self.opencode_browse_btn = ctk.CTkButton(
+            opencode_frame,
+            text="Browse",
+            width=60,
+            command=self.on_browse_opencode_config,
+        )
+        self.opencode_browse_btn.grid(row=0, column=1, sticky="e")
+
+        CTkToolTip(
+            opencode_label,
+            "Path to opencode.jsonc for Kaggle URL synchronization.",
+        )
+        CTkToolTip(
+            self.opencode_path_entry,
+            "Path to opencode.jsonc for Kaggle URL synchronization.",
+        )
+
         # Save Settings Button
         self.save_settings_btn = ctk.CTkButton(
             settings_frame,
@@ -1581,7 +1655,7 @@ class ProxyGUI(ctk.CTk):
             hover_color="#2ECC71",
             command=self.on_save_settings,
         )
-        self.save_settings_btn.grid(row=6, column=0, padx=10, pady=20, sticky="ew")
+        self.save_settings_btn.grid(row=8, column=0, padx=10, pady=20, sticky="ew")
 
         # Global Reset Button (prominent and red)
         self.global_reset_btn = ctk.CTkButton(
@@ -1592,7 +1666,45 @@ class ProxyGUI(ctk.CTk):
             font=ctk.CTkFont(size=14, weight="bold"),
             command=self.on_global_reset,
         )
-        self.global_reset_btn.grid(row=7, column=0, padx=10, pady=10, sticky="ew")
+        self.global_reset_btn.grid(row=9, column=0, padx=10, pady=10, sticky="ew")
+
+    def on_browse_vpn_dir(self):
+        from tkinter import filedialog
+
+        current = self.vpn_dir_entry.get().strip()
+        initial_dir = current if (current and os.path.exists(current)) else os.getcwd()
+        selected = filedialog.askdirectory(
+            parent=self,
+            title="Select VPN Switcher Directory",
+            initialdir=initial_dir,
+        )
+        if selected:
+            self.vpn_dir_entry.delete(0, "end")
+            self.vpn_dir_entry.insert(0, selected)
+
+    def on_browse_opencode_config(self):
+        from tkinter import filedialog
+
+        current = self.opencode_path_entry.get().strip()
+        initial_dir = (
+            os.path.dirname(current)
+            if (current and os.path.exists(os.path.dirname(current)))
+            else os.getcwd()
+        )
+        selected = filedialog.askopenfilename(
+            parent=self,
+            title="Select OpenCode Config File",
+            initialdir=initial_dir,
+            filetypes=[
+                ("OpenCode Config", "*.json *.jsonc"),
+                ("JSON Files", "*.json"),
+                ("JSONC Files", "*.jsonc"),
+                ("All Files", "*.*"),
+            ],
+        )
+        if selected:
+            self.opencode_path_entry.delete(0, "end")
+            self.opencode_path_entry.insert(0, selected)
 
     def on_browse_keys_location(self):
         from tkinter import filedialog
@@ -1620,6 +1732,8 @@ class ProxyGUI(ctk.CTk):
             config["connect_timeout"] = float(self.connect_timeout_entry.get())
             config["read_timeout"] = float(self.read_timeout_entry.get())
             config["keys_location"] = self.keys_location_entry.get().strip()
+            config["vpn_switcher_dir"] = self.vpn_dir_entry.get().strip()
+            config["opencode_config_path"] = self.opencode_path_entry.get().strip()
 
             save_rotation_config(config)
             try:
@@ -2277,9 +2391,10 @@ class ProxyGUI(ctk.CTk):
 
         def run_manual_forward():
             try:
-                script_path = (
-                    r"D:\Work\Active\server-services\vpn_switcher\forawrd_tunnels.ps1"
-                )
+                vpn_dir = get_vpn_dir()
+                script_path = os.path.join(vpn_dir, "forawrd_tunnels.ps1")
+                if not os.path.exists(script_path):
+                    script_path = os.path.join(vpn_dir, "forward_tunnels.ps1")
                 result = subprocess.run(
                     [
                         "powershell",

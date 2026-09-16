@@ -1,5 +1,5 @@
 {
-  "last_fallback_switch_time": 1789495116.7437067,
+  "last_fallback_switch_time": 1789578803.838318,
   "primary_model": "gemini-3.6-flash",
   "fallback_model": "gemini-3-flash-preview",
   "model_cooldowns": {},
@@ -222,5 +222,7 @@
   "auto_continue": true,
   "max_auto_continues": 50,
   "truncation_detection": true,
-  "keys_location": "D:\\Personal\\myvault\\90 Private\\Sensitive"
+  "keys_location": "D:\\Personal\\myvault\\90 Private\\Sensitive",
+  "vpn_switcher_dir": "D:\\Work\\Active\\server-services\\vpn_switcher",
+  "opencode_config_path": "C:\\Users\\satori/.config/opencode/opencode.json"
 }

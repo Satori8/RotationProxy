@@ -5,15 +5,94 @@ import logging
 logger = logging.getLogger("proxy")
 
 ROTATION_CONFIG_PATH = "config_rotation.json"
-DEFAULT_KEYS_LOCATION = r"D:\Personal\myvault\90 Private\Sensitive"
+
+
+def get_default_keys_location() -> str:
+    env_val = os.environ.get("GEMINI_PROXY_KEYS_LOCATION")
+    if env_val:
+        return env_val
+    legacy = r"D:\Personal\myvault\90 Private\Sensitive"
+    if os.path.exists(legacy):
+        return legacy
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(project_root, "keys")
+
+
+DEFAULT_KEYS_LOCATION = get_default_keys_location()
+
+
+def get_keys_location(config: dict | None = None) -> str:
+    if config and config.get("keys_location"):
+        return config["keys_location"]
+    env_val = os.environ.get("GEMINI_PROXY_KEYS_LOCATION")
+    if env_val:
+        return env_val
+    return DEFAULT_KEYS_LOCATION
+
+
+def get_default_vpn_dir() -> str:
+    env_val = os.environ.get("VPN_SWITCHER_DIR")
+    if env_val:
+        return env_val
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    rel_path = os.path.abspath(
+        os.path.join(project_root, "..", "server-services", "vpn_switcher")
+    )
+    if os.path.exists(rel_path):
+        return rel_path
+    legacy = r"D:\Work\Active\server-services\vpn_switcher"
+    if os.path.exists(legacy):
+        return legacy
+    return rel_path
+
+
+DEFAULT_VPN_DIR = get_default_vpn_dir()
+
+
+def get_vpn_dir(config: dict | None = None) -> str:
+    if config and config.get("vpn_switcher_dir"):
+        return config["vpn_switcher_dir"]
+    return get_default_vpn_dir()
+
+
+def get_default_opencode_config_path() -> str:
+    env_val = os.environ.get("OPENCODE_CONFIG_PATH")
+    if env_val:
+        return env_val
+    candidates = [
+        os.path.expanduser("~/.config/opencode-profiles/default/opencode.jsonc"),
+        os.path.expanduser("~/.config/opencode/opencode.json"),
+        os.path.join(
+            os.environ.get("APPDATA", ""),
+            ".config",
+            "opencode-profiles",
+            "default",
+            "opencode.jsonc",
+        ),
+        r"E:\Appdata\.config\opencode-profiles\default\opencode.jsonc",
+    ]
+    for cand in candidates:
+        if cand and os.path.exists(cand):
+            return cand
+    return os.path.expanduser("~/.config/opencode-profiles/default/opencode.jsonc")
+
+
+DEFAULT_OPENCODE_CONFIG_PATH = get_default_opencode_config_path()
+
+
+def get_opencode_config_path(config: dict | None = None) -> str:
+    if config and config.get("opencode_config_path"):
+        return config["opencode_config_path"]
+    return get_default_opencode_config_path()
+
 
 USE_KAGGLE = False
 SAVE_CHAT_LOGS = False
 KAGGLE_BASE_URL = "https://fine-cable-outside-escape.trycloudflare.com/v1"
 
 
-def load_kaggle_url() -> str:
-    path = r"E:\Appdata\.config\opencode-profiles\default\opencode.jsonc"
+def load_kaggle_url(config: dict | None = None) -> str:
+    path = get_opencode_config_path(config)
     try:
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
@@ -30,8 +109,8 @@ def load_kaggle_url() -> str:
     return "https://fine-cable-outside-escape.trycloudflare.com/v1"
 
 
-def save_kaggle_url(new_url: str) -> bool:
-    path = r"E:\Appdata\.config\opencode-profiles\default\opencode.jsonc"
+def save_kaggle_url(new_url: str, config: dict | None = None) -> bool:
+    path = get_opencode_config_path(config)
     try:
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
@@ -121,6 +200,12 @@ def load_rotation_config() -> dict:
             if "keys_location" not in config:
                 config["keys_location"] = DEFAULT_KEYS_LOCATION
                 needs_upgrade = True
+            if "vpn_switcher_dir" not in config:
+                config["vpn_switcher_dir"] = DEFAULT_VPN_DIR
+                needs_upgrade = True
+            if "opencode_config_path" not in config:
+                config["opencode_config_path"] = DEFAULT_OPENCODE_CONFIG_PATH
+                needs_upgrade = True
 
             if needs_upgrade:
                 save_rotation_config(config)
@@ -155,6 +240,8 @@ def load_rotation_config() -> dict:
         "connect_timeout": 15.0,
         "read_timeout": 120.0,
         "keys_location": DEFAULT_KEYS_LOCATION,
+        "vpn_switcher_dir": DEFAULT_VPN_DIR,
+        "opencode_config_path": DEFAULT_OPENCODE_CONFIG_PATH,
     }
 
 
