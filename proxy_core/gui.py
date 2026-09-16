@@ -16,12 +16,14 @@ ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 from proxy_core.config import (
     load_rotation_config,
     save_rotation_config,
+    DEFAULT_KEYS_LOCATION,
     USE_KAGGLE,
     SAVE_CHAT_LOGS,
     KAGGLE_BASE_URL,
     load_kaggle_url,
     save_kaggle_url,
 )
+from proxy_core.rotation import reload_all_keys
 from proxy_core.state import log_queue
 from proxy_core.helpers import beautify_json_string
 import logging
@@ -1536,6 +1538,41 @@ class ProxyGUI(ctk.CTk):
         self.max_sleep_entry.insert(0, str(config.get("max_exponential_sleep", 65.0)))
         self.max_sleep_entry.grid(row=5, column=0, padx=10, pady=(0, 10), sticky="ew")
 
+        # Keys Location (Column 1)
+        keys_label = ctk.CTkLabel(
+            settings_frame,
+            text="Keys Location (Directory or File):",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        )
+        keys_label.grid(row=4, column=1, padx=10, pady=(10, 2), sticky="w")
+
+        keys_loc_frame = ctk.CTkFrame(settings_frame, fg_color="transparent")
+        keys_loc_frame.grid(row=5, column=1, padx=10, pady=(0, 10), sticky="ew")
+        keys_loc_frame.grid_columnconfigure(0, weight=1)
+
+        self.keys_location_entry = ctk.CTkEntry(keys_loc_frame)
+        self.keys_location_entry.insert(
+            0, str(config.get("keys_location", DEFAULT_KEYS_LOCATION))
+        )
+        self.keys_location_entry.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+
+        self.keys_browse_btn = ctk.CTkButton(
+            keys_loc_frame,
+            text="Browse",
+            width=60,
+            command=self.on_browse_keys_location,
+        )
+        self.keys_browse_btn.grid(row=0, column=1, sticky="e")
+
+        CTkToolTip(
+            keys_label,
+            "Путь к папке или файлу с API ключами (Google, OpenRouter, Mistral и др.)",
+        )
+        CTkToolTip(
+            self.keys_location_entry,
+            "Путь к папке или файлу с API ключами",
+        )
+
         # Save Settings Button
         self.save_settings_btn = ctk.CTkButton(
             settings_frame,
@@ -1557,6 +1594,20 @@ class ProxyGUI(ctk.CTk):
         )
         self.global_reset_btn.grid(row=7, column=0, padx=10, pady=10, sticky="ew")
 
+    def on_browse_keys_location(self):
+        from tkinter import filedialog
+
+        current = self.keys_location_entry.get().strip()
+        initial_dir = current if (current and os.path.exists(current)) else os.getcwd()
+        selected = filedialog.askdirectory(
+            parent=self,
+            title="Select Keys Location Directory",
+            initialdir=initial_dir,
+        )
+        if selected:
+            self.keys_location_entry.delete(0, "end")
+            self.keys_location_entry.insert(0, selected)
+
     def on_save_settings(self):
         """Save the settings to config_rotation.json."""
         try:
@@ -1568,8 +1619,25 @@ class ProxyGUI(ctk.CTk):
             config["max_exponential_sleep"] = float(self.max_sleep_entry.get())
             config["connect_timeout"] = float(self.connect_timeout_entry.get())
             config["read_timeout"] = float(self.read_timeout_entry.get())
+            config["keys_location"] = self.keys_location_entry.get().strip()
 
             save_rotation_config(config)
+            try:
+                reload_all_keys(config["keys_location"])
+            except Exception as ex:
+                logger.warning(f"[GUI] reload_all_keys warning: {ex}")
+            try:
+                import httpx
+
+                threading.Thread(
+                    target=lambda: httpx.post(
+                        f"http://{self.host}:{self.port}/control/reload_keys",
+                        timeout=2.0,
+                    ),
+                    daemon=True,
+                ).start()
+            except Exception:
+                pass
             logger.info("[GUI] Settings saved successfully.")
             log_queue.put("[GUI] Settings saved successfully.")
         except Exception as e:

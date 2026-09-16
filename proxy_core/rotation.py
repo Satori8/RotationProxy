@@ -4,23 +4,46 @@ import time
 import re
 import logging
 import datetime
-from proxy_core.config import load_rotation_config, save_rotation_config
+from proxy_core.config import (
+    load_rotation_config,
+    save_rotation_config,
+    DEFAULT_KEYS_LOCATION,
+)
 
 logger = logging.getLogger("proxy")
 
-KEYS_FILE_PATH = r"D:\Personal\myvault\90 Private\Sensitive\Google API Keys.md"
-OPENROUTER_KEYS_FILE = (
-    r"D:\Personal\myvault\90 Private\Sensitive\OpenRouter API Keys.md"
-)
-MISTRAL_KEYS_FILE = r"D:\Personal\myvault\90 Private\Sensitive\Mistral API Keys.md"
-LLM7_KEYS_FILE = r"D:\Personal\myvault\90 Private\Sensitive\LLM7 Api Keys.md"
-OLLAMA_KEYS_FILE = r"D:\Personal\myvault\90 Private\Sensitive\Ollama Cloud API Keys.md"
-OLLAMA_CLOUD_KEYS_FILE = (
-    r"D:\Personal\myvault\90 Private\Sensitive\Ollama Cloud API Keys.md"
-)
-OPENCODE_KEYS_FILE = (
-    r"D:\Personal\myvault\90 Private\Sensitive\Opencode Zen API Keys.md"
-)
+
+def resolve_key_file_paths(keys_location: str | None = None) -> dict[str, str]:
+    if not keys_location:
+        config_val = load_rotation_config().get("keys_location")
+        keys_loc: str = str(config_val) if config_val else DEFAULT_KEYS_LOCATION
+    else:
+        keys_loc = keys_location
+    if os.path.isfile(keys_loc):
+        base_dir = os.path.dirname(keys_loc)
+        google_path = keys_loc
+    else:
+        base_dir = keys_loc
+        google_path = os.path.join(base_dir, "Google API Keys.md")
+    return {
+        "google": google_path,
+        "openrouter": os.path.join(base_dir, "OpenRouter API Keys.md"),
+        "mistral": os.path.join(base_dir, "Mistral API Keys.md"),
+        "llm7": os.path.join(base_dir, "LLM7 Api Keys.md"),
+        "ollama": os.path.join(base_dir, "Ollama Cloud API Keys.md"),
+        "ollama_cloud": os.path.join(base_dir, "Ollama Cloud API Keys.md"),
+        "opencode": os.path.join(base_dir, "Opencode Zen API Keys.md"),
+    }
+
+
+_initial_paths = resolve_key_file_paths()
+KEYS_FILE_PATH = _initial_paths["google"]
+OPENROUTER_KEYS_FILE = _initial_paths["openrouter"]
+MISTRAL_KEYS_FILE = _initial_paths["mistral"]
+LLM7_KEYS_FILE = _initial_paths["llm7"]
+OLLAMA_KEYS_FILE = _initial_paths["ollama"]
+OLLAMA_CLOUD_KEYS_FILE = _initial_paths["ollama_cloud"]
+OPENCODE_KEYS_FILE = _initial_paths["opencode"]
 
 
 def load_keys_from_file(filepath: str) -> list[str]:
@@ -54,6 +77,56 @@ LLM7_KEYS = load_keys_from_file(LLM7_KEYS_FILE)
 OLLAMA_KEYS = load_keys_from_file(OLLAMA_KEYS_FILE)
 OLLAMA_CLOUD_KEYS = load_keys_from_file(OLLAMA_CLOUD_KEYS_FILE)
 OPENCODE_KEYS = load_keys_from_file(OPENCODE_KEYS_FILE)
+
+
+def reload_all_keys(keys_location: str | None = None) -> dict[str, int]:
+    global \
+        KEYS_FILE_PATH, \
+        OPENROUTER_KEYS_FILE, \
+        MISTRAL_KEYS_FILE, \
+        LLM7_KEYS_FILE, \
+        OLLAMA_KEYS_FILE, \
+        OLLAMA_CLOUD_KEYS_FILE, \
+        OPENCODE_KEYS_FILE
+    paths = resolve_key_file_paths(keys_location)
+    KEYS_FILE_PATH = paths["google"]
+    OPENROUTER_KEYS_FILE = paths["openrouter"]
+    MISTRAL_KEYS_FILE = paths["mistral"]
+    LLM7_KEYS_FILE = paths["llm7"]
+    OLLAMA_KEYS_FILE = paths["ollama"]
+    OLLAMA_CLOUD_KEYS_FILE = paths["ollama_cloud"]
+    OPENCODE_KEYS_FILE = paths["opencode"]
+
+    new_api = load_keys_from_file(KEYS_FILE_PATH)
+    API_KEYS.clear()
+    API_KEYS.extend(new_api)
+    new_openrouter = load_keys_from_file(OPENROUTER_KEYS_FILE)
+    OPENROUTER_KEYS.clear()
+    OPENROUTER_KEYS.extend(new_openrouter)
+    new_mistral = load_keys_from_file(MISTRAL_KEYS_FILE)
+    MISTRAL_KEYS.clear()
+    MISTRAL_KEYS.extend(new_mistral)
+    new_llm7 = load_keys_from_file(LLM7_KEYS_FILE)
+    LLM7_KEYS.clear()
+    LLM7_KEYS.extend(new_llm7)
+    new_ollama = load_keys_from_file(OLLAMA_KEYS_FILE)
+    OLLAMA_KEYS.clear()
+    OLLAMA_KEYS.extend(new_ollama)
+    new_ollama_cloud = load_keys_from_file(OLLAMA_CLOUD_KEYS_FILE)
+    OLLAMA_CLOUD_KEYS.clear()
+    OLLAMA_CLOUD_KEYS.extend(new_ollama_cloud)
+    new_opencode = load_keys_from_file(OPENCODE_KEYS_FILE)
+    OPENCODE_KEYS.clear()
+    OPENCODE_KEYS.extend(new_opencode)
+    return {
+        "API_KEYS": len(API_KEYS),
+        "OPENROUTER_KEYS": len(OPENROUTER_KEYS),
+        "MISTRAL_KEYS": len(MISTRAL_KEYS),
+        "LLM7_KEYS": len(LLM7_KEYS),
+        "OLLAMA_KEYS": len(OLLAMA_KEYS),
+        "OLLAMA_CLOUD_KEYS": len(OLLAMA_CLOUD_KEYS),
+        "OPENCODE_KEYS": len(OPENCODE_KEYS),
+    }
 
 
 def seconds_until_rpd_reset() -> float:
@@ -157,6 +230,7 @@ def remove_key_from_error_log(model: str, key: str) -> None:
 def get_interface_index(interface_alias: str) -> str:
     """Resolve interface index for a given alias safely using PowerShell (read-only)."""
     import subprocess
+
     try:
         cmd = f'Get-NetIPInterface -InterfaceAlias "{interface_alias}" -AddressFamily IPv4 | Select-Object -ExpandProperty InterfaceIndex'
         result = subprocess.run(
@@ -199,7 +273,18 @@ def wait_for_adapter_and_add_route(vpn_index: int, timeout: float = 60.0) -> boo
             if not system_vpn_active:
                 if_index = get_interface_index(interface_alias)
                 if if_index:
-                    route_cmd = ["route", "ADD", "0.0.0.0", "MASK", "0.0.0.0", "10.8.0.1", "METRIC", "50", "IF", if_index]
+                    route_cmd = [
+                        "route",
+                        "ADD",
+                        "0.0.0.0",
+                        "MASK",
+                        "0.0.0.0",
+                        "10.8.0.1",
+                        "METRIC",
+                        "50",
+                        "IF",
+                        if_index,
+                    ]
                     subprocess.run(
                         route_cmd,
                         stdout=subprocess.DEVNULL,

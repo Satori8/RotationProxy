@@ -5,6 +5,7 @@ import logging
 logger = logging.getLogger("proxy")
 
 ROTATION_CONFIG_PATH = "config_rotation.json"
+DEFAULT_KEYS_LOCATION = r"D:\Personal\myvault\90 Private\Sensitive"
 
 USE_KAGGLE = False
 SAVE_CHAT_LOGS = False
@@ -117,6 +118,9 @@ def load_rotation_config() -> dict:
             if "read_timeout" not in config:
                 config["read_timeout"] = 120.0
                 needs_upgrade = True
+            if "keys_location" not in config:
+                config["keys_location"] = DEFAULT_KEYS_LOCATION
+                needs_upgrade = True
 
             if needs_upgrade:
                 save_rotation_config(config)
@@ -150,6 +154,7 @@ def load_rotation_config() -> dict:
         "max_exponential_sleep": 65.0,
         "connect_timeout": 15.0,
         "read_timeout": 120.0,
+        "keys_location": DEFAULT_KEYS_LOCATION,
     }
 
 

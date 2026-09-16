@@ -46,6 +46,7 @@ from proxy_core.rotation import (
     wait_for_adapter_and_add_route,
     restart_vpn_service,
     get_interface_index,
+    reload_all_keys,
 )
 from proxy_core.state import log_queue as global_log_queue
 from proxy_core.helpers import (
@@ -901,6 +902,17 @@ async def reset_cooldowns_endpoint():
     return {"status": "success", "message": "Cooldowns reset successfully."}
 
 
+@app.post("/control/reload_keys")
+async def reload_keys_endpoint():
+    try:
+        counts = reload_all_keys()
+        logger.info(f"Keys reloaded successfully: {counts}")
+        return {"status": "success", "counts": counts}
+    except Exception as e:
+        logger.error(f"Failed to reload keys: {e}")
+        return {"status": "error", "message": str(e)}
+
+
 @app.post("/control/global_reset")
 async def global_reset_endpoint():
     global \
@@ -920,6 +932,11 @@ async def global_reset_endpoint():
     LAST_REQUEST_TIME.clear()
     VPN_CONSECUTIVE_ERRORS = 0
     VPN_CURRENT_INDEX = 1
+
+    try:
+        reload_all_keys()
+    except Exception as e:
+        logger.error(f"Failed to reload keys in global reset: {e}")
 
     try:
         config = load_rotation_config()

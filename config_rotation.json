@@ -1,13 +1,17 @@
 {
-  "last_fallback_switch_time": 1787484301.2943835,
+  "last_fallback_switch_time": 1789495116.7437067,
   "primary_model": "gemini-3.6-flash",
   "fallback_model": "gemini-3-flash-preview",
   "model_cooldowns": {},
   "consecutive_model_failures": {
+    "google/gemini-3.8-flash": 0,
+    "google/gemini-3.7-flash": 0,
     "gemini-3.6-flash": 0,
-    "gemini-3.7-flash": 0
+    "gemini-3.8-flash": 0,
+    "gemini-3.5-flash": 0
   },
   "thinking_models": [
+    "google/gemini-3.8-flash",
     "gemini-3.6-flash",
     "google/gemini-3.7-flash",
     "gemini-3.5-flash",
@@ -133,10 +137,23 @@
       "base_url": "https://openrouter.ai/api/v1",
       "keys_pool": "OPENROUTER_KEYS",
       "target_model": "moonshotai/kimi-k2.6:free"
+    },
+    "gemini-3.8-flash": {
+      "provider": "gemini",
+      "base_url": "https://generativelanguage.googleapis.com",
+      "keys_pool": "API_KEYS",
+      "target_model": "gemini-3.8-flash"
+    },
+    "google/gemini-3.8-flash": {
+      "provider": "gemini",
+      "base_url": "https://generativelanguage.googleapis.com",
+      "keys_pool": "API_KEYS",
+      "target_model": "gemini-3.8-flash"
     }
   },
   "rotation_lists": {
     "gemini-3.6-flash": [
+      "google/gemini-3.8-flash",
       "gemini-3.6-flash",
       "google/gemini-3.7-flash",
       "gemini-3.5-flash",
@@ -172,22 +189,22 @@
   },
   "use_kaggle": false,
   "force_model": {
-    "all": "auto",
-    "gemini-3.6-flash": "auto"
+    "all": "google/gemini-3.8-flash",
+    "gemini-3.6-flash": "google/gemini-3.8-flash"
   },
   "save_chat_logs": true,
   "vpn_switching_mode": "every_request",
   "vpn_static_channel": 0,
   "vpn_errors_threshold": 3,
-  "key_cooldown_duration": 90.0,
-  "vpn_disabled_pause_sleep": 65.0,
-  "max_exponential_sleep": 65.0,
+  "key_cooldown_duration": 90,
+  "vpn_disabled_pause_sleep": 65,
+  "max_exponential_sleep": 65,
   "parallelism_enabled": true,
   "parallel_tunnels_count": 3,
   "per_channel_delay": 0.5,
   "filter_context": true,
-  "connect_timeout": 30.0,
-  "read_timeout": 180.0,
+  "connect_timeout": 30,
+  "read_timeout": 180,
   "enable_model_rotation": false,
   "compactor_compact_tools": true,
   "compactor_compact_superpowers": true,
@@ -204,5 +221,6 @@
   "sse_keepalive": true,
   "auto_continue": true,
   "max_auto_continues": 50,
-  "truncation_detection": true
+  "truncation_detection": true,
+  "keys_location": "D:\\Personal\\myvault\\90 Private\\Sensitive"
 }
