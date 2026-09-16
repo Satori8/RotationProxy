@@ -35,6 +35,9 @@ def get_default_vpn_dir() -> str:
     if env_val:
         return env_val
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    local_vpn = os.path.join(project_root, "vpn")
+    if os.path.exists(local_vpn):
+        return local_vpn
     rel_path = os.path.abspath(
         os.path.join(project_root, "..", "server-services", "vpn_switcher")
     )
@@ -43,7 +46,7 @@ def get_default_vpn_dir() -> str:
     legacy = r"D:\Work\Active\server-services\vpn_switcher"
     if os.path.exists(legacy):
         return legacy
-    return rel_path
+    return local_vpn
 
 
 DEFAULT_VPN_DIR = get_default_vpn_dir()

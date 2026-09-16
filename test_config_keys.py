@@ -122,6 +122,10 @@ def test_get_vpn_dir(monkeypatch):
     monkeypatch.delenv("VPN_SWITCHER_DIR", raising=False)
     assert get_vpn_dir({}) == DEFAULT_VPN_DIR
     assert get_vpn_dir(None) == DEFAULT_VPN_DIR
+    # 4. Check local vpn directory priority
+    local_vpn = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vpn")
+    if os.path.exists(local_vpn):
+        assert get_vpn_dir({}) == local_vpn
 
 
 def test_get_opencode_config_path(monkeypatch):
