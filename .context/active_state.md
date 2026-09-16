@@ -1,33 +1,25 @@
 # Active State
 
 ## Current Milestone / Task
-- **Objective:** Eliminate hardcoded paths across GeminiProxy, implement dynamic configurable paths via settings, and produce a complete PC migration guide with in-depth WireGuard VPN instructions.
+- **Objective:** Support project-local `vpn\` directory, implement one-command migration script (`migrate.cmd`) with git pull, and prepare repository for commit and push to remote.
 - **Status:** Complete.
 
 ## Verified Components
-1. **Dynamic Path Resolution (`proxy_core/config.py`):**
-   - `get_keys_location()`: Config -> `GEMINI_PROXY_KEYS_LOCATION` -> portable default `<project_root>/keys` -> legacy check.
-   - `get_vpn_dir()`: Config `"vpn_switcher_dir"` -> `VPN_SWITCHER_DIR` -> relative `<project_root>/../server-services/vpn_switcher` -> legacy check.
-   - `get_opencode_config_path()`: Config `"opencode_config_path"` -> `OPENCODE_CONFIG_PATH` -> auto-detection of `~/.config/opencode-profiles/default/opencode.jsonc`.
-   - `load_kaggle_url()` & `save_kaggle_url()`: Updated to resolve path dynamically.
-   - `load_rotation_config()`: Schema upgrade automatically ensures `"vpn_switcher_dir"` and `"opencode_config_path"` exist.
-2. **Server Subsystem (`proxy_core/server.py`):**
-   - Resolves `vpn_dir` via `get_vpn_dir()`.
-   - `sys.path.insert` guarded by existence check.
-   - WireGuard manager import wrapped gracefully for standalone zero-VPN mode.
-3. **GUI Interface (`proxy_core/gui.py`):**
-   - Dynamic resolution of `vpn_dir` and `forawrd_tunnels.ps1`.
-   - Added GUI Settings fields in Settings Tab:
-     - "VPN Switcher Directory" with directory browse dialog.
-     - "OpenCode Config Path" with file browse dialog.
-   - Settings persist seamlessly to `config_rotation.json`.
-4. **Tools & Diagnostics (`tools/analyze_duplicates.py`):**
-   - Removed absolute paths; updated to resolve relative to project root.
-5. **Testing & Verification:**
-   - `test_config_keys.py`: 7 tests passing.
-   - `test_compactor.py`: 37 tests passing.
-6. **Documentation (`MIGRATION_GUIDE.md`):**
-   - Complete guide covering hardware/OS, Python/uv setup, keys layout, client integration, and comprehensive WireGuard VPN setup.
+1. **Project-Local VPN Directory (`vpn/`):**
+   - Moved/copied all WireGuard switching files to `vpn/` (`vpn_manager.py`, `forawrd_tunnels.ps1`, `register.ps1`, `unregister.ps1`, `configs/vpn1.conf` ... `vpn6.conf`).
+   - Updated `get_default_vpn_dir()` in `proxy_core/config.py` to prioritize `os.path.join(project_root, "vpn")`.
+   - Verified via `test_config_keys.py` (7 tests passing).
+2. **One-Command Migration Script (`migrate.cmd`):**
+   - Performs `git pull` from remote.
+   - Detects / provisions `.venv` via `uv` or standard Python `venv`.
+   - Installs and upgrades all runtime requirements.
+   - Validates project-local `vpn\` folder and WireGuard configurations.
+   - Checks WireGuard Windows installation (`C:\Program Files\WireGuard\wireguard.exe`).
+   - Automatically sets `"vpn_switcher_dir"` in `config_rotation.json` to local `%CD%\vpn`.
+   - Audits configured API key files and paths.
+   - Prompts for immediate GUI launch.
+3. **Documentation:**
+   - Updated `MIGRATION_GUIDE.md` detailing `migrate.cmd` workflow, `project_dir\vpn` structure, and WireGuard setup.
 
-## Next Step
-- System is fully portable and ready for deployment to any PC. Run `launch_gui.cmd` to start.
+## Next Actionable Step
+- Commit changes and push to `origin main`.
