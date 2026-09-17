@@ -8,6 +8,7 @@ from proxy_core.config import (
     DEFAULT_OPENCODE_CONFIG_PATH,
     get_keys_location,
     get_vpn_dir,
+    get_default_vpn_dir,
     get_opencode_config_path,
 )
 from proxy_core.rotation import (
@@ -98,8 +99,15 @@ def test_reload_all_keys_from_temp_dir():
 
 def test_get_keys_location(monkeypatch):
     monkeypatch.delenv("GEMINI_PROXY_KEYS_LOCATION", raising=False)
-    # 1. Config takes precedence
-    assert get_keys_location({"keys_location": "D:/Custom/Keys"}) == "D:/Custom/Keys"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # 1. Config takes precedence if path exists
+        assert get_keys_location({"keys_location": temp_dir}) == temp_dir
+        # Non-existent falls back to default
+        assert (
+            get_keys_location({"keys_location": "D:/NonExistent/KeysPathXYZ"})
+            == DEFAULT_KEYS_LOCATION
+        )
+
     # 2. Env takes precedence over default
     monkeypatch.setenv("GEMINI_PROXY_KEYS_LOCATION", "D:/Env/Keys")
     assert get_keys_location({}) == "D:/Env/Keys"
@@ -112,8 +120,15 @@ def test_get_keys_location(monkeypatch):
 
 def test_get_vpn_dir(monkeypatch):
     monkeypatch.delenv("VPN_SWITCHER_DIR", raising=False)
-    # 1. Config takes precedence
-    assert get_vpn_dir({"vpn_switcher_dir": "D:/Custom/VPN"}) == "D:/Custom/VPN"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # 1. Config takes precedence if path exists
+        assert get_vpn_dir({"vpn_switcher_dir": temp_dir}) == temp_dir
+        # Non-existent falls back to default
+        assert (
+            get_vpn_dir({"vpn_switcher_dir": "D:/NonExistent/VPNPathXYZ"})
+            == DEFAULT_VPN_DIR
+        )
+
     # 2. Env takes precedence over default
     monkeypatch.setenv("VPN_SWITCHER_DIR", "D:/Env/VPN")
     assert get_vpn_dir({}) == "D:/Env/VPN"
@@ -121,20 +136,28 @@ def test_get_vpn_dir(monkeypatch):
     # 3. Default fallback
     monkeypatch.delenv("VPN_SWITCHER_DIR", raising=False)
     assert get_vpn_dir({}) == DEFAULT_VPN_DIR
-    assert get_vpn_dir(None) == DEFAULT_VPN_DIR
     # 4. Check local vpn directory priority
     local_vpn = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vpn")
     if os.path.exists(local_vpn):
-        assert get_vpn_dir({}) == local_vpn
+        assert get_default_vpn_dir() == local_vpn
 
 
 def test_get_opencode_config_path(monkeypatch):
     monkeypatch.delenv("OPENCODE_CONFIG_PATH", raising=False)
-    # 1. Config takes precedence
-    assert (
-        get_opencode_config_path({"opencode_config_path": "D:/Custom/opencode.jsonc"})
-        == "D:/Custom/opencode.jsonc"
-    )
+    with tempfile.TemporaryDirectory() as temp_dir:
+        fake_cfg = os.path.join(temp_dir, "opencode.jsonc")
+        with open(fake_cfg, "w", encoding="utf-8") as f:
+            f.write("{}")
+        # 1. Config takes precedence if path exists
+        assert get_opencode_config_path({"opencode_config_path": fake_cfg}) == fake_cfg
+        # Non-existent falls back to default
+        assert (
+            get_opencode_config_path(
+                {"opencode_config_path": "D:/NonExistent/opencode.jsonc"}
+            )
+            == DEFAULT_OPENCODE_CONFIG_PATH
+        )
+
     # 2. Env takes precedence over default
     monkeypatch.setenv("OPENCODE_CONFIG_PATH", "D:/Env/opencode.jsonc")
     assert get_opencode_config_path({}) == "D:/Env/opencode.jsonc"

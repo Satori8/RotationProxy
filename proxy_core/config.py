@@ -22,12 +22,17 @@ DEFAULT_KEYS_LOCATION = get_default_keys_location()
 
 
 def get_keys_location(config: dict | None = None) -> str:
-    if config and config.get("keys_location"):
-        return config["keys_location"]
     env_val = os.environ.get("GEMINI_PROXY_KEYS_LOCATION")
     if env_val:
         return env_val
-    return DEFAULT_KEYS_LOCATION
+    if config is None:
+        config = load_rotation_config()
+    if config and config.get("keys_location"):
+        configured = config["keys_location"]
+        if os.path.exists(configured):
+            return configured
+        return get_default_keys_location()
+    return get_default_keys_location()
 
 
 def get_default_vpn_dir() -> str:
@@ -53,8 +58,16 @@ DEFAULT_VPN_DIR = get_default_vpn_dir()
 
 
 def get_vpn_dir(config: dict | None = None) -> str:
+    env_val = os.environ.get("VPN_SWITCHER_DIR")
+    if env_val:
+        return env_val
+    if config is None:
+        config = load_rotation_config()
     if config and config.get("vpn_switcher_dir"):
-        return config["vpn_switcher_dir"]
+        configured = config["vpn_switcher_dir"]
+        if os.path.exists(configured):
+            return configured
+        return get_default_vpn_dir()
     return get_default_vpn_dir()
 
 
@@ -84,8 +97,16 @@ DEFAULT_OPENCODE_CONFIG_PATH = get_default_opencode_config_path()
 
 
 def get_opencode_config_path(config: dict | None = None) -> str:
+    env_val = os.environ.get("OPENCODE_CONFIG_PATH")
+    if env_val:
+        return env_val
+    if config is None:
+        config = load_rotation_config()
     if config and config.get("opencode_config_path"):
-        return config["opencode_config_path"]
+        configured = config["opencode_config_path"]
+        if os.path.exists(configured):
+            return configured
+        return get_default_opencode_config_path()
     return get_default_opencode_config_path()
 
 

@@ -102,7 +102,7 @@ echo [MIGRATE] Updating config_rotation.json with local project paths...
 :: 6. Check API Keys Location
 echo.
 echo [MIGRATE] Checking API keys configuration...
-".venv\Scripts\python.exe" -c "from proxy_core.config import load_rotation_config, get_keys_location; from proxy_core.rotation import resolve_key_file_paths; cfg = load_rotation_config(); loc = get_keys_location(cfg); paths = resolve_key_file_paths(loc); print(f'Keys directory: {loc}'); [print(f'  - {k}: {\"EXISTS\" if os.path.exists(v) else \"MISSING\"} ({v})') for k, v in paths.items()]"
+".venv\Scripts\python.exe" -c "import os; from proxy_core.config import load_rotation_config, get_keys_location; from proxy_core.rotation import resolve_key_file_paths; cfg = load_rotation_config(); loc = get_keys_location(cfg); paths = resolve_key_file_paths(loc); print(f'Keys directory: {loc}'); [print(f'  - {k}: {\"EXISTS\" if os.path.exists(v) else \"MISSING\"} ({v})') for k, v in paths.items()]"
 
 echo.
 echo ============================================================

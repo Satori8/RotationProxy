@@ -133,13 +133,26 @@ class ProxyGUI(ctk.CTk):
 
         import sys
 
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        vpn_local = os.path.join(project_root, "vpn")
+        if os.path.exists(vpn_local) and vpn_local not in sys.path:
+            sys.path.insert(0, vpn_local)
+
         vpn_dir = get_vpn_dir()
         if vpn_dir and os.path.exists(vpn_dir) and vpn_dir not in sys.path:
             sys.path.insert(0, vpn_dir)
         try:
-            from vpn_manager import WindowsWireGuardManager
+            try:
+                from vpn_manager import WindowsWireGuardManager
+            except ImportError:
+                from vpn.vpn_manager import WindowsWireGuardManager
 
-            self.vpn_manager = WindowsWireGuardManager()
+            configs_dir = (
+                os.path.join(vpn_dir, "configs")
+                if vpn_dir and os.path.exists(os.path.join(vpn_dir, "configs"))
+                else None
+            )
+            self.vpn_manager = WindowsWireGuardManager(configs_dir=configs_dir)
             logger.info("Successfully loaded WindowsWireGuardManager in GUI.")
         except Exception as ve:
             self.vpn_manager = None
