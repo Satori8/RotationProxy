@@ -8,24 +8,39 @@ echo ============================================================
 echo [MIGRATE] Working directory: %CD%
 echo.
 
-:: 1. Git Pull Latest Code
+:: 1. Git Pull or Initialize from Remote
 where git >nul 2>nul
-if %ERRORLEVEL% EQU 0 (
-    echo [MIGRATE] Pulling latest updates from Git remote...
-    git pull
-    if %ERRORLEVEL% NEQ 0 (
-        echo [WARNING] Git pull failed or encountered conflicts. Continuing with local files...
+if !ERRORLEVEL! EQU 0 (
+    if not exist ".git" (
+        echo [MIGRATE] .git folder not found. Initializing Git tracking from remote...
+        git init
+        git remote add origin https://github.com/Satori8/RotationProxy.git
+        git fetch origin main
+        git reset --hard origin/main
+        git branch -M main
+        git branch --set-upstream-to=origin/main main
+        if !ERRORLEVEL! EQU 0 (
+            echo [SUCCESS] Repository initialized and synced with origin/main successfully!
+        ) else (
+            echo [WARNING] Failed to sync from remote repository. Continuing with local files...
+        )
     ) else (
-        echo [SUCCESS] Git repository updated successfully.
+        echo [MIGRATE] Pulling latest updates from Git remote...
+        git pull origin main
+        if !ERRORLEVEL! NEQ 0 (
+            echo [WARNING] Git pull failed or encountered conflicts. Continuing with local files...
+        ) else (
+            echo [SUCCESS] Git repository updated successfully.
+        )
     )
 ) else (
-    echo [WARNING] Git is not installed or not in PATH. Skipping git pull.
+    echo [WARNING] Git is not installed or not in PATH. Skipping git sync.
 )
 echo.
 
 :: 2. Check Python
 where python >nul 2>nul
-if %ERRORLEVEL% NEQ 0 (
+if !ERRORLEVEL! NEQ 0 (
     echo [FATAL] Python is not installed or not in PATH!
     echo Please install Python 3.10+ from https://www.python.org/
     pause
@@ -38,7 +53,7 @@ echo.
 echo [MIGRATE] Setting up Python virtual environment (.venv)...
 if not exist ".venv" (
     where uv >nul 2>nul
-    if %ERRORLEVEL% EQU 0 (
+    if !ERRORLEVEL! EQU 0 (
         echo [MIGRATE] Creating virtualenv with uv...
         uv venv .venv
     ) else (
@@ -49,14 +64,14 @@ if not exist ".venv" (
 
 echo [MIGRATE] Installing / updating required dependencies...
 where uv >nul 2>nul
-if %ERRORLEVEL% EQU 0 (
+if !ERRORLEVEL! EQU 0 (
     uv pip install --python ".venv\Scripts\python.exe" customtkinter fastapi uvicorn httpx starlette tiktoken tree-sitter pytest
 ) else (
     ".venv\Scripts\python.exe" -m pip install --upgrade pip
     ".venv\Scripts\python.exe" -m pip install customtkinter fastapi uvicorn httpx starlette tiktoken tree-sitter pytest
 )
 
-if %ERRORLEVEL% NEQ 0 (
+if !ERRORLEVEL! NEQ 0 (
     echo [FATAL] Failed to install Python dependencies.
     pause
     exit /b 1
