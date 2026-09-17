@@ -977,6 +977,10 @@ class ProxyGUI(ctk.CTk):
             logger.error(f"Failed to open script folder: {e}")
             log_queue.put(f"[GUI] [ERROR] Failed to open script folder: {e}")
 
+    def log(self, message: str, level: str = "info") -> None:
+        tag_str = f"[{level.upper()}] " if level else ""
+        log_queue.put(f"[GUI] {tag_str}{message}")
+
     def on_clear_logs(self):
         self.log_textbox.delete("1.0", "end")
 
@@ -2283,6 +2287,13 @@ class ProxyGUI(ctk.CTk):
             from proxy_core.rotation import wait_for_adapter_and_add_route
 
             try:
+                try:
+                    from proxy_core.rotation import ensure_vps_loop_protection
+
+                    ensure_vps_loop_protection()
+                except Exception as e:
+                    self.log(f"[ROUTING] VPS bypass route error: {e}", "warning")
+
                 self.vpn_manager.uninstall_all_services(print_cb=log_queue.put)
                 log_queue.put(
                     "[GUI] [SYSTEM] Installing and starting all 6 VPN tunnels in parallel..."

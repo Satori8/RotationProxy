@@ -1,3 +1,16 @@
+# 0. VPS Routing Loop Protection (ensures WireGuard UDP packets always route out physical interface)
+$physical_route = Get-NetRoute -DestinationPrefix "0.0.0.0/0" | Where-Object { 
+    $_.NextHop -ne "0.0.0.0" -and $_.NextHop -ne "10.8.0.1" -and 
+    $_.InterfaceAlias -notlike "*WireGuard*" -and $_.InterfaceAlias -notlike "vpn*" 
+} | Select-Object -First 1
+
+if ($physical_route) {
+    $gw = $physical_route.NextHop
+    $pIfIndex = $physical_route.InterfaceIndex
+    route ADD 158.178.159.108 MASK 255.255.255.255 $gw METRIC 1 IF $pIfIndex >$null 2>&1
+    Write-Host "[ROUTING] Protected VPS endpoint 158.178.159.108 via physical gateway $gw (IF $pIfIndex)" -ForegroundColor Cyan
+}
+
 # 1. Look up all active adapters with IP addresses matching 10.8.0.X
 $ip_addresses = Get-NetIPAddress -IPAddress "10.8.0.*" -AddressFamily IPv4
 

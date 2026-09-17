@@ -243,6 +243,49 @@ def get_interface_index(interface_alias: str) -> str:
         return ""
 
 
+def ensure_vps_loop_protection(vps_ip: str = "158.178.159.108") -> bool:
+    """Adds a /32 bypass route to the VPS IP via the physical gateway (Ethernet/Wi-Fi)
+    to prevent routing loops when tunnels add default routes."""
+    import subprocess
+
+    try:
+        ps_cmd = (
+            '$r = Get-NetRoute -DestinationPrefix "0.0.0.0/0" | '
+            'Where-Object { $_.NextHop -ne "0.0.0.0" -and $_.NextHop -ne "10.8.0.1" -and '
+            '$_.InterfaceAlias -notlike "*WireGuard*" -and $_.InterfaceAlias -notlike "vpn*" } | '
+            "Select-Object -First 1; "
+            'if ($r) { "$($r.NextHop)|$($r.InterfaceIndex)" }'
+        )
+        res = subprocess.run(
+            ["powershell", "-Command", ps_cmd], capture_output=True, text=True
+        )
+        out = res.stdout.strip()
+        if out and "|" in out:
+            gw, p_if = out.split("|", 1)
+            route_cmd = [
+                "route",
+                "ADD",
+                vps_ip,
+                "MASK",
+                "255.255.255.255",
+                gw.strip(),
+                "METRIC",
+                "1",
+                "IF",
+                p_if.strip(),
+            ]
+            subprocess.run(
+                route_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            logger.info(
+                f"[Route] Added VPS bypass route: {vps_ip}/32 -> {gw.strip()} (IF {p_if.strip()})"
+            )
+            return True
+    except Exception as e:
+        logger.debug(f"[Route] Failed to add VPS bypass route: {e}")
+    return False
+
+
 def wait_for_adapter_and_add_route(vpn_index: int, timeout: float = 60.0) -> bool:
     """Polls every 0.5s until the VPN adapter's IP appears, then adds the default route."""
     import time
@@ -273,6 +316,7 @@ def wait_for_adapter_and_add_route(vpn_index: int, timeout: float = 60.0) -> boo
             if not system_vpn_active:
                 if_index = get_interface_index(interface_alias)
                 if if_index:
+                    ensure_vps_loop_protection()
                     route_cmd = [
                         "route",
                         "ADD",
